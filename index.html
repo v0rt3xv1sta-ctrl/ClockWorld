@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>ClockWorld — a voxel sandbox</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="crosshair" aria-hidden="true"></div>
+
+  <div id="hud"></div>
+
+  <div id="hotbar" aria-hidden="true"></div>
+
+  <div id="overlay">
+    <div class="card">
+      <h1>ClockWorld</h1>
+      <p class="tagline">A tiny Minecraft-style voxel sandbox — built from scratch with WebGL.</p>
+
+      <div class="controls">
+        <div><span class="k">Mouse</span> Look around</div>
+        <div><span class="k">W A S D</span> Move</div>
+        <div><span class="k">Space</span> Jump / swim up / fly up</div>
+        <div><span class="k">Shift</span> Sneak / fly down</div>
+        <div><span class="k">Ctrl</span> or double-tap <span class="k">W</span> Sprint</div>
+        <div><span class="k">Left click</span> Break block</div>
+        <div><span class="k">Right click</span> Place block</div>
+        <div><span class="k">Middle click</span> Pick block</div>
+        <div><span class="k">1–9 / Scroll</span> Select hotbar slot</div>
+        <div><span class="k">F</span> Toggle fly &nbsp; <span class="k">T</span> Freeze time &nbsp; <span class="k">Esc</span> Pause</div>
+      </div>
+
+      <button id="playBtn">Play</button>
+      <div class="row">
+        <button id="newBtn" class="secondary">New World</button>
+        <button id="saveBtn" class="secondary">Save</button>
+      </div>
+      <p id="status" class="status"></p>
+    </div>
+  </div>
+
+  <script src="js/math.js"></script>
+  <script src="js/noise.js"></script>
+  <script src="js/blocks.js"></script>
+  <script src="js/textures.js"></script>
+  <script src="js/world.js"></script>
+  <script src="js/renderer.js"></script>
+  <script src="js/player.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
