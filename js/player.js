@@ -12,7 +12,8 @@
   const Blocks = global.Blocks;
   const HALF = 0.3, HEIGHT = 1.8, EYE = 1.62;
   const GRAVITY = 28, JUMP_VEL = 8.4, TERMINAL = 55;
-  const WALK = 4.4, SPRINT = 6.2, SNEAK = 1.7, FLY = 11, SWIM = 4.0;
+  const WALK = 4.4, SPRINT = 6.2, SNEAK = 1.7, FLY = 11, SWIM = 4.6, SWIM_UP = 5.0;
+  const STEP_LAND = 0.6, STEP_WATER = 1.12; // auto-step height: a block up while swimming
   const SENS = 0.0023, PITCH_LIMIT = Math.PI / 2 - 0.01;
 
   const MAX_HEALTH = 20, MAX_AIR = 10; // air in seconds underwater before drowning
@@ -97,7 +98,7 @@
 
   Player.prototype.bodyInLiquid = function (world) {
     const p = this.pos;
-    return Blocks.isLiquid(world.getBlock(Math.floor(p[0]), Math.floor(p[1] + 0.9), Math.floor(p[2])));
+    return Blocks.isLiquid(world.getBlock(Math.floor(p[0]), Math.floor(p[1] + 0.5), Math.floor(p[2])));
   };
 
   // Move one axis by delta and resolve against solid voxels.
@@ -129,6 +130,40 @@
     return false;
   };
 
+  // Does the body AABB currently overlap any solid voxel?
+  Player.prototype.overlapsSolid = function (world) {
+    const p = this.pos, e = 0.0005;
+    const x0 = Math.floor(p[0] - HALF + e), x1 = Math.floor(p[0] + HALF - e);
+    const y0 = Math.floor(p[1] + e), y1 = Math.floor(p[1] + HEIGHT - e);
+    const z0 = Math.floor(p[2] - HALF + e), z1 = Math.floor(p[2] + HALF - e);
+    for (let x = x0; x <= x1; x++)
+      for (let y = y0; y <= y1; y++)
+        for (let z = z0; z <= z1; z++)
+          if (Blocks.isSolid(world.getBlock(x, y, z))) return true;
+    return false;
+  };
+
+  // Horizontal movement with auto step-up so the player can climb a ledge (and,
+  // with the taller water step, swim up and out of water).
+  Player.prototype.moveHoriz = function (world, dx, dz, stepH) {
+    const sx = this.pos[0], sy = this.pos[1], sz = this.pos[2];
+    const hx = this.collideAxis(world, 0, dx);
+    const hz = this.collideAxis(world, 2, dz);
+    if (stepH <= 0 || !(hx || hz)) return;
+    const nx = this.pos[0], nz = this.pos[2];
+    const baseProg = Math.abs(nx - sx) + Math.abs(nz - sz);
+    // retry the move from a stepped-up height
+    this.pos[0] = sx; this.pos[2] = sz; this.pos[1] = sy + stepH;
+    if (this.overlapsSolid(world)) { this.pos[0] = nx; this.pos[2] = nz; this.pos[1] = sy; return; }
+    this.collideAxis(world, 0, dx);
+    this.collideAxis(world, 2, dz);
+    if (Math.abs(this.pos[0] - sx) + Math.abs(this.pos[2] - sz) > baseProg + 1e-3) {
+      if (this.vel[1] < 0) this.vel[1] = 0; // settle gently onto the step
+    } else {
+      this.pos[0] = nx; this.pos[2] = nz; this.pos[1] = sy; // stepping didn't help
+    }
+  };
+
   // cmd: { f, b, l, r, jump, descend, sprint, sneak }
   Player.prototype.update = function (dt, world, cmd) {
     const cy = Math.cos(this.yaw), sy = Math.sin(this.yaw);
@@ -156,10 +191,10 @@
       this.vel[2] = wz * speed;
 
       if (this.inWater) {
-        this.vel[1] -= GRAVITY * 0.28 * dt;          // buoyant, slow sink
-        if (this.vel[1] < -6) this.vel[1] = -6;
-        if (cmd.jump) this.vel[1] = SWIM;            // swim up
-        this.vel[1] *= 0.92;                          // drag
+        this.vel[1] -= GRAVITY * 0.16 * dt;   // gentle sink
+        this.vel[1] *= 0.86;                   // water drag
+        if (this.vel[1] < -4) this.vel[1] = -4;
+        if (cmd.jump) this.vel[1] = SWIM_UP;   // hold to swim / climb up and out
       } else {
         this.vel[1] -= GRAVITY * dt;
         if (this.vel[1] < -TERMINAL) this.vel[1] = -TERMINAL;
@@ -168,8 +203,8 @@
     }
 
     const wasAirborne = !this.onGroundPrev;
-    this.collideAxis(world, 0, this.vel[0] * dt);
-    this.collideAxis(world, 2, this.vel[2] * dt);
+    const stepH = this.flying ? 0 : (this.inWater ? STEP_WATER : (this.onGroundPrev ? STEP_LAND : 0));
+    this.moveHoriz(world, this.vel[0] * dt, this.vel[2] * dt, stepH);
     this.collideAxis(world, 1, this.vel[1] * dt);
 
     // fall damage on landing (survival only; ignored while flying/swimming)

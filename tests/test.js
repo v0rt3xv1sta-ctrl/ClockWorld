@@ -300,4 +300,29 @@ function transformPoint(m, p, w = 1) {
   ok("death and respawn");
 })();
 
+// ---- water physics: swimming out ----
+(function () {
+  const Player = global.Player;
+  const w = new W.World(555);
+  w.getOrCreateChunk(0, 0);
+  // carve a pool with a bank one block above the water surface
+  for (let x = -1; x <= 6; x++) for (let z = -1; z <= 1; z++) for (let y = 63; y <= 76; y++) w.setBlock(x, y, z, Blocks.ID.AIR);
+  for (let x = -1; x <= 6; x++) for (let z = -1; z <= 1; z++) w.setBlock(x, 63, z, Blocks.ID.STONE);
+  for (let x = 0; x <= 2; x++) for (let z = -1; z <= 1; z++) for (let y = 64; y <= 67; y++) w.setBlock(x, y, z, Blocks.ID.WATER);
+  for (let x = 3; x <= 6; x++) for (let z = -1; z <= 1; z++) for (let y = 64; y <= 67; y++) w.setBlock(x, y, z, Blocks.ID.STONE); // shoreline at water level (top = 68)
+
+  const p = new Player([1.0, 64.2, 1.0], "survival");
+  p.yaw = -Math.PI / 2; // makes forward point toward +X (the bank)
+  const swim = { f: 1, b: 0, l: 0, r: 0, jump: 1, descend: 0, sprint: 0, sneak: 0 };
+  let everInWater = false, onBank = false;
+  for (let i = 0; i < 600 && !onBank; i++) {
+    p.update(1 / 60, w, swim);
+    if (p.inWater) everInWater = true;
+    if (!p.inWater && p.onGroundPrev && p.pos[0] > 3.2 && p.pos[1] > 67.4) onBank = true;
+  }
+  assert(everInWater, "player was swimming at some point");
+  assert(onBank, "climbed out of the water and stood on the bank (x=" + p.pos[0].toFixed(2) + ", y=" + p.pos[1].toFixed(2) + ")");
+  ok("water physics: can swim up and climb out onto a higher bank");
+})();
+
 console.log("\nAll " + passed + " test groups passed.");
