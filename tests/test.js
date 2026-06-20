@@ -182,6 +182,15 @@ function transformPoint(m, p, w = 1) {
   assert(f.pos[1] > y0 + 2, "fly ascends (dy=" + (f.pos[1] - y0).toFixed(2) + ")");
   ok("fly mode ascends without gravity");
 
+  // look direction: mouse-right turns toward the camera's right (+X), mouse-down looks down
+  const look = new Player([0, 70, 0]); // yaw 0 faces -Z
+  look.applyMouse(100, 0);
+  assert(look.getDir()[0] > 0, "mouse-right turns toward +X (not inverted), dir.x=" + look.getDir()[0].toFixed(2));
+  const look2 = new Player([0, 70, 0]);
+  look2.applyMouse(0, 100);
+  assert(look2.getDir()[1] < 0, "mouse-down looks downward, dir.y=" + look2.getDir()[1].toFixed(2));
+  ok("mouse look orientation (yaw not inverted, pitch correct)");
+
   assert(p.intersectsBlock(Math.floor(p.pos[0]), Math.floor(p.pos[1]), Math.floor(p.pos[2])),
     "AABB intersects own cell (blocks self-placement)");
   ok("intersectsBlock self-placement guard");

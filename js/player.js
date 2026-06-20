@@ -26,7 +26,7 @@
   }
 
   Player.prototype.applyMouse = function (dx, dy) {
-    this.yaw += dx * SENS;
+    this.yaw -= dx * SENS;
     this.pitch -= dy * SENS;
     if (this.pitch > PITCH_LIMIT) this.pitch = PITCH_LIMIT;
     if (this.pitch < -PITCH_LIMIT) this.pitch = -PITCH_LIMIT;
