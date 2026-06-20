@@ -17,7 +17,10 @@
   <!-- bottom-center vitals + hotbar (in-game) -->
   <div id="vitals" aria-hidden="true">
     <div id="air" class="bubbles"></div>
-    <div id="hearts" class="bubbles"></div>
+    <div class="vrow">
+      <div id="hearts" class="bubbles"></div>
+      <div id="hunger" class="bubbles"></div>
+    </div>
     <div id="hotbar"></div>
   </div>
 
@@ -89,23 +92,45 @@
     <div class="invpanel">
       <div id="invTitle">Inventory</div>
       <div id="invPalette" class="grid palette"></div>
+      <div id="invCraft" class="craftarea">
+        <div id="invCraftGrid" class="grid craftgrid"></div>
+        <div class="arrow">➜</div>
+        <div id="invCraftResult" class="grid resultgrid"></div>
+      </div>
       <div id="invMain" class="grid"></div>
       <div class="invlabel">Hotbar</div>
       <div id="invHotbar" class="grid"></div>
       <div class="hint" id="invHint">Click to pick up / place · Right-click for one · <span class="k">E</span> / <span class="k">Esc</span> to close</div>
     </div>
-    <div id="cursorStack"></div>
   </div>
+
+  <!-- ============ Container (chest / crafting table / furnace) ============ -->
+  <div id="container" class="screen hidden">
+    <div class="invpanel">
+      <div id="ctTitle">Chest</div>
+      <div id="ctPanel"></div>
+      <div class="invlabel">Inventory</div>
+      <div id="ctMain" class="grid"></div>
+      <div id="ctHotbar" class="grid"></div>
+      <div class="hint">Click to move items · right-click for one · <span class="k">E</span>/<span class="k">Esc</span> to close</div>
+    </div>
+  </div>
+
+  <div id="cursorStack"></div>
 
   <script src="js/math.js"></script>
   <script src="js/noise.js"></script>
   <script src="js/blocks.js"></script>
+  <script src="js/items.js"></script>
+  <script src="js/recipes.js"></script>
+  <script src="js/furnace.js"></script>
   <script src="js/inventory.js"></script>
   <script src="js/saves.js"></script>
   <script src="js/textures.js"></script>
   <script src="js/world.js"></script>
   <script src="js/renderer.js"></script>
   <script src="js/player.js"></script>
+  <script src="js/net.js"></script>
   <script src="js/main.js"></script>
 </body>
 </html>

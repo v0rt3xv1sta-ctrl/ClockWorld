@@ -16,7 +16,7 @@
   const STEP_LAND = 0.6, STEP_WATER = 1.12; // auto-step height: a block up while swimming
   const SENS = 0.0023, PITCH_LIMIT = Math.PI / 2 - 0.01;
 
-  const MAX_HEALTH = 20, MAX_AIR = 10; // air in seconds underwater before drowning
+  const MAX_HEALTH = 20, MAX_AIR = 10, MAX_HUNGER = 20; // air/hunger in their own units
 
   function Player(spawn, mode) {
     this.pos = spawn.slice();
@@ -35,17 +35,51 @@
     this.maxHealth = MAX_HEALTH;
     this.air = MAX_AIR;
     this.maxAir = MAX_AIR;
+    this.hunger = MAX_HUNGER;
+    this.maxHunger = MAX_HUNGER;
+    this.saturation = 5;
+    this.exhaustion = 0;
+    this._regen = 0;
+    this._starve = 0;
     this.dead = false;
     this.fallPeak = spawn[1];
     this._drownAcc = 0;
     this._hurtFlash = 0; // seconds remaining on the red damage flash
   }
 
+  Player.prototype.eat = function (f) {
+    this.hunger = Math.min(this.maxHunger, this.hunger + f.hunger);
+    this.saturation = Math.min(this.hunger, this.saturation + (f.sat || 0));
+    if (f.heal) this.heal(f.heal);
+  };
+
+  Player.prototype.addExhaustion = function (n) {
+    this.exhaustion += n;
+    while (this.exhaustion >= 4) {
+      this.exhaustion -= 4;
+      if (this.saturation > 0) this.saturation = Math.max(0, this.saturation - 1);
+      else this.hunger = Math.max(0, this.hunger - 1);
+    }
+  };
+
+  Player.prototype.hungerTick = function (dt, cmd) {
+    const hspeed = Math.hypot(this.vel[0], this.vel[2]);
+    this.addExhaustion(dt * 0.08 + hspeed * dt * (cmd && cmd.sprint ? 0.1 : 0.04));
+    if (this.hunger >= 18 && this.health < this.maxHealth && this.saturation > 0) {
+      this._regen += dt;
+      if (this._regen >= 3) { this._regen = 0; this.heal(1); this.addExhaustion(0.6); }
+    } else this._regen = 0;
+    if (this.hunger <= 0) {
+      this._starve += dt;
+      if (this._starve >= 4) { this._starve = 0; if (this.health > 1) this.hurt(1); }
+    } else this._starve = 0;
+  };
+
   Player.prototype.setMode = function (mode) {
     this.mode = mode === "creative" ? "creative" : "survival";
     this.creative = this.mode === "creative";
     if (!this.creative) { this.flying = false; }
-    else { this.health = this.maxHealth; this.air = this.maxAir; this.dead = false; }
+    else { this.health = this.maxHealth; this.air = this.maxAir; this.hunger = this.maxHunger; this.saturation = 5; this.dead = false; }
   };
 
   Player.prototype.hurt = function (amount) {
@@ -64,6 +98,9 @@
     this.vel = [0, 0, 0];
     this.health = this.maxHealth;
     this.air = this.maxAir;
+    this.hunger = this.maxHunger;
+    this.saturation = 5;
+    this.exhaustion = 0;
     this.dead = false;
     this.fallPeak = this.pos[1];
     this._drownAcc = 0;
@@ -198,7 +235,7 @@
       } else {
         this.vel[1] -= GRAVITY * dt;
         if (this.vel[1] < -TERMINAL) this.vel[1] = -TERMINAL;
-        if (cmd.jump && this.onGroundPrev) this.vel[1] = JUMP_VEL;
+        if (cmd.jump && this.onGroundPrev) { this.vel[1] = JUMP_VEL; this.addExhaustion(0.05); }
       }
     }
 
@@ -242,6 +279,7 @@
     }
 
     if (this._hurtFlash > 0) this._hurtFlash -= dt;
+    if (!this.creative) this.hungerTick(dt, cmd);
   };
 
   global.Player = Player;

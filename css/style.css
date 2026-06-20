@@ -56,9 +56,11 @@ html, body {
   display: flex; flex-direction: column; align-items: center; gap: 5px;
   z-index: 5; pointer-events: none;
 }
+.vrow { display: flex; gap: 16px; }
 .bubbles { display: flex; gap: 2px; height: 18px; }
 .bubbles img { width: 18px; height: 18px; image-rendering: pixelated; }
-#air:empty, #hearts:empty { display: none; }
+#hunger { flex-direction: row-reverse; }
+#air:empty, #hearts:empty, #hunger:empty { display: none; }
 
 #hotbar {
   display: flex; gap: 4px; padding: 4px;
@@ -179,8 +181,26 @@ button.danger { color: #ffd7d7; background: rgba(150, 40, 40, 0.5); border: 1px 
 .invpanel .slot:hover { border-color: rgba(255, 255, 255, 0.5); }
 .hint { font-size: 12px; opacity: 0.6; margin-top: 12px; text-align: center; }
 #cursorStack {
-  position: fixed; width: 44px; height: 44px; pointer-events: none; z-index: 12;
+  position: fixed; width: 44px; height: 44px; pointer-events: none; z-index: 20;
   image-rendering: pixelated; background-size: 80%; background-position: center; background-repeat: no-repeat;
   transform: translate(-50%, -50%); display: none;
 }
 #cursorStack .count { position: absolute; bottom: 0; right: 2px; font: bold 13px/1 monospace; text-shadow: 1px 1px 0 #000; }
+
+/* crafting / container layouts */
+.craftarea { display: flex; align-items: center; gap: 12px; justify-content: center; margin: 8px 0; }
+.craftarea .arrow { font-size: 22px; opacity: 0.7; }
+.grid.craftgrid { width: auto; }
+.grid.craftgrid.n2 { width: 108px; }
+.grid.craftgrid.n3 { width: 160px; }
+.grid.resultgrid { width: 52px; }
+.grid.resultgrid .slot { border-color: rgba(126, 231, 135, 0.5); }
+#ctTitle { font-weight: 700; font-size: 18px; margin-bottom: 12px; text-align: center; }
+#ctPanel { display: flex; flex-direction: column; align-items: center; gap: 8px; margin-bottom: 8px; }
+.furnace-layout { display: flex; align-items: center; gap: 14px; }
+.furnace-col { display: flex; flex-direction: column; align-items: center; gap: 18px; }
+.furnace-burn { font-size: 20px; opacity: 0.5; }
+.furnace-burn.lit { opacity: 1; filter: drop-shadow(0 0 6px #ff8c1a); }
+.cook-arrow { display: flex; flex-direction: column; align-items: center; }
+.cook-bar { width: 70px; height: 8px; background: rgba(0, 0, 0, 0.5); border: 1px solid rgba(255, 255, 255, 0.3); border-radius: 4px; overflow: hidden; }
+.cook-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #ffe08a, #ff9f43); }

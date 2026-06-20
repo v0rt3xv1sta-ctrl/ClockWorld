@@ -14,6 +14,9 @@
   const LEGACY_KEY = "clockworld_save_v1";
 
   const Blocks = window.Blocks;
+  const Items = window.Items;
+  const Recipes = window.Recipes;
+  const Furnace = window.Furnace;
   const W = window.WorldMod;
   const ID = Blocks.ID;
   const Inventory = window.InventoryMod.Inventory;
@@ -30,13 +33,21 @@
   let running = false, locked = false, invOpen = false, dead = false;
   let cursor = null, mouseX = 0, mouseY = 0;
   let mineKey = null, mineProgress = 0, mineTime = 0;
-  let breakTimer = 0, placeTimer = 0, lastW = 0, wSprint = false;
+  let breakTimer = 0, placeTimer = 0, eatTimer = 0, lastW = 0, wSprint = false;
   const mouseDown = [false, false, false];
   const keys = {};
   let last = 0, fps = 0;
-  const iconCache = {}, hearts = {};
+  const iconCache = {}, hearts = {}, drum = {};
   let bubbleURL = "";
-  let lastHeartHP = -1, lastAirN = -1;
+  let lastHeartHP = -1, lastAirN = -1, lastHungerH = -1;
+
+  // interactable containers (per block position), persisted with the world
+  const chests = new Map();   // "x,y,z" -> Inventory(27)
+  const furnaces = new Map(); // "x,y,z" -> furnace state
+  let containerOpen = false, containerKind = null, containerPos = null;
+  let chestInv = null, furnaceState = null, craftGrid = [], craftN = 0;
+
+  const anyUIOpen = () => invOpen || containerOpen || dead;
 
   const OFFSETS = [];
   for (let dx = -RENDER_DIST; dx <= RENDER_DIST; dx++)
@@ -116,6 +127,10 @@
     creativeHotbar = (data.creativeHotbar && data.creativeHotbar.slice()) || Blocks.HOTBAR.slice();
     selectedIndex = data.selected || 0;
 
+    chests.clear(); furnaces.clear();
+    if (data.chests) for (const k in data.chests) chests.set(k, Inventory.fromJSON(data.chests[k], 27));
+    if (data.furnaces) for (const k in data.furnaces) furnaces.set(k, Object.assign(Furnace.create(), data.furnaces[k]));
+
     const spawn = (data.player && data.player.pos) ? data.player.pos.slice() : computeSpawn();
     player = new window.Player(spawn, mode);
     if (data.player) {
@@ -123,13 +138,14 @@
       player.pitch = data.player.pitch || 0;
       if (data.player.health !== undefined) player.health = data.player.health;
       if (data.player.air !== undefined) player.air = data.player.air;
+      if (data.player.hunger !== undefined) player.hunger = data.player.hunger;
       if (mode === "creative") player.flying = data.player.flying !== false;
     }
     player.spawn = (data.spawn || spawn).slice();
 
     generateInitialArea();
-    running = true; dead = false; invOpen = false; cursor = null;
-    lastHeartHP = -1; lastAirN = -1;
+    running = true; dead = false; invOpen = false; containerOpen = false; cursor = null;
+    lastHeartHP = -1; lastAirN = -1; lastHungerH = -1;
     $("menu").classList.add("hidden");
     $("vitals").removeAttribute("aria-hidden");
     renderHotbar();
@@ -149,13 +165,16 @@
 
   function saveCurrent() {
     if (!worldId || !world || !player) return;
+    const chestsJSON = {}; chests.forEach((c, k) => { if (!c.isEmpty()) chestsJSON[k] = c.toJSON(); });
+    const furnacesJSON = {}; furnaces.forEach((f, k) => { furnacesJSON[k] = f; });
     saves.save(worldId, {
       seed: world.seed, mode, edits: world.edits, time,
       player: {
         pos: player.pos, yaw: player.yaw, pitch: player.pitch,
-        health: player.health, air: player.air, flying: player.flying,
+        health: player.health, air: player.air, hunger: player.hunger, flying: player.flying,
       },
       inventory: inv.toJSON(), creativeHotbar, selected: selectedIndex, spawn: player.spawn,
+      chests: chestsJSON, furnaces: furnacesJSON,
     });
   }
 
@@ -163,7 +182,8 @@
     saveCurrent();
     running = false;
     if (document.pointerLockElement) document.exitPointerLock();
-    ["pause", "death", "inventory"].forEach((s) => $(s).classList.add("hidden"));
+    ["pause", "death", "inventory", "container"].forEach((s) => $(s).classList.add("hidden"));
+    invOpen = false; containerOpen = false; cursor = null; updateCursor();
     $("vitals").setAttribute("aria-hidden", "true");
     renderWorldList();
     $("menu").classList.remove("hidden");
@@ -196,18 +216,20 @@
     if (dt > 0.05) dt = 0.05;
     fps += (1 / Math.max(dt, 1e-4) - fps) * 0.1;
 
-    if (running && locked && !invOpen && !dead) {
+    if (running && locked && !anyUIOpen()) {
       player.update(dt, world, buildCmd());
       if (!timeFrozen) time = (time + dt / DAY_LENGTH) % 1;
     }
 
     if (running) {
+      furnaces.forEach((f) => Furnace.tick(f, dt)); // smelting runs even when closed
       const eye = player.getEye(), dir = player.getDir();
       const target = world.raycast(eye, dir, REACH);
-      if (locked && !invOpen && !dead) {
+      if (locked && !anyUIOpen()) {
         handleHold(dt, target);
         if (player.dead && !dead) onDeath();
       }
+      if (containerOpen && containerKind === "furnace") renderContainer(); // live progress
       manageWorld();
       renderScene(eye, dir, target);
       updateHud(target); updateMineBar(); updateVitals(); updateDamageFlash();
@@ -276,22 +298,48 @@
 
   // ====================================================== mining / placing
   function currentPlaceable() {
-    if (mode === "creative") return creativeHotbar[selectedIndex] || 0;
-    const s = inv.get(selectedIndex);
-    return s ? s.id : 0;
+    const id = mode === "creative" ? (creativeHotbar[selectedIndex] || 0) : (inv.get(selectedIndex) ? inv.get(selectedIndex).id : 0);
+    return Items.isPlaceable(id) ? id : 0;
   }
 
   function resetMine() { mineKey = null; mineProgress = 0; mineTime = 0; }
 
+  function heldSelectedId() {
+    return mode === "creative" ? creativeHotbar[selectedIndex] : (inv.get(selectedIndex) ? inv.get(selectedIndex).id : 0);
+  }
+  function heldFood() { const id = heldSelectedId(); return Items.isFood(id) ? Items.food(id) : null; }
+
   function handleHold(dt, target) {
     breakTimer -= dt; placeTimer -= dt;
     if (mouseDown[0]) {
-      if (player.creative) {
-        if (breakTimer <= 0) { breakInstant(target); breakTimer = 0.2; }
-        resetMine();
-      } else { mine(dt, target); }
+      if (player.creative) { if (breakTimer <= 0) { breakInstant(target); breakTimer = 0.2; } resetMine(); }
+      else mine(dt, target);
     } else resetMine();
-    if (mouseDown[2] && placeTimer <= 0) { place(target); placeTimer = 0.22; }
+
+    if (mouseDown[2]) {
+      const food = heldFood();
+      if (food && mode === "survival" && player.hunger < player.maxHunger) {
+        eatTimer += dt;
+        if (eatTimer >= 1.2) { player.eat(food); inv.removeAt(selectedIndex, 1); renderHotbar(); eatTimer = 0; }
+      } else if (placeTimer <= 0) { place(target); placeTimer = 0.22; }
+    } else eatTimer = 0;
+  }
+
+  function getChest(hit) { const k = hit.join(","); if (!chests.has(k)) chests.set(k, new Inventory(27)); return chests.get(k); }
+  function getFurnace(hit) { const k = hit.join(","); if (!furnaces.has(k)) furnaces.set(k, Furnace.create()); return furnaces.get(k); }
+  function removeContainerAt(hit, id) {
+    const k = hit.join(",");
+    if (id === ID.CHEST) chests.delete(k);
+    if (id === ID.FURNACE || id === ID.FURNACE_LIT) furnaces.delete(k);
+  }
+
+  function interactBlock(id, hit) {
+    const kind = Blocks.interactOf(id);
+    if (kind === "door") {
+      world.setBlock(hit[0], hit[1], hit[2], id === ID.DOOR_OPEN ? ID.DOOR : ID.DOOR_OPEN);
+    } else if (kind === "chest") { chestInv = getChest(hit); openContainer("chest", hit); }
+    else if (kind === "craft") { craftN = 3; craftGrid = new Array(9).fill(null); openContainer("craft", hit); }
+    else if (kind === "furnace") { furnaceState = getFurnace(hit); openContainer("furnace", hit); }
   }
 
   function mine(dt, target) {
@@ -301,18 +349,24 @@
     const key = target.hit.join(",");
     if (key !== mineKey) { mineKey = key; mineProgress = 0; mineTime = Blocks.hardnessOf(id); }
     mineProgress += dt;
-    if (mineProgress >= mineTime) {
-      world.setBlock(target.hit[0], target.hit[1], target.hit[2], ID.AIR);
-      const drop = Blocks.dropOf(id);
-      if (drop) { inv.add(drop, 1); renderHotbar(); }
-      resetMine();
-    }
+    if (mineProgress >= mineTime) { breakSurvival(target.hit, id); resetMine(); }
+  }
+
+  function breakSurvival(hit, id) {
+    removeContainerAt(hit, id);
+    world.setBlock(hit[0], hit[1], hit[2], ID.AIR);
+    const drop = Blocks.dropOf(id);
+    if (drop) inv.add(drop, 1);
+    if (id === ID.LEAVES && Math.random() < 0.06) inv.add(Items.ITEM.APPLE, 1);   // food from trees
+    if (id === ID.GRASS && Math.random() < 0.18) inv.add(Items.ITEM.WHEAT, 1);    // wheat for bread
+    renderHotbar();
   }
 
   function breakInstant(target) {
     if (!target) return;
     const id = world.getBlock(target.hit[0], target.hit[1], target.hit[2]);
     if (id === ID.AIR || Blocks.isLiquid(id)) return; // creative may remove bedrock
+    removeContainerAt(target.hit, id);
     world.setBlock(target.hit[0], target.hit[1], target.hit[2], ID.AIR);
   }
 
@@ -336,14 +390,30 @@
 
   // ====================================================== icons
   function iconFor(id) {
-    if (!iconCache[id]) iconCache[id] = window.Textures.iconForBlock(atlas, id, 48);
+    if (!iconCache[id]) iconCache[id] = Items.iconURL(id, atlas);
     return iconCache[id];
   }
   function buildIcons() {
     hearts.full = heartURL("#ff3b3b", 1);
     hearts.half = heartURL("#ff3b3b", 0.5);
     hearts.empty = heartURL("#3a1414", 1);
+    drum.full = drumURL("#c98a3c", 1);
+    drum.half = drumURL("#c98a3c", 0.5);
+    drum.empty = drumURL("#2e2418", 1);
     bubbleURL = bubble();
+  }
+  function drumURL(color, fill) {
+    const c = document.createElement("canvas"); c.width = c.height = 18;
+    const x = c.getContext("2d");
+    const draw = (col) => {
+      x.fillStyle = col;
+      x.beginPath(); x.arc(10, 7, 5, 0, 7); x.fill();          // meat
+      x.fillRect(3, 11, 6, 3); x.fillRect(2, 12, 2, 4);         // bone
+    };
+    draw("#2e2418");
+    if (fill < 1) { x.save(); x.beginPath(); x.rect(9, 0, 9, 18); x.clip(); draw(color); x.restore(); }
+    else draw(color);
+    return c.toDataURL();
   }
   function heartURL(color, fill) {
     const c = document.createElement("canvas"); c.width = c.height = 18;
@@ -395,25 +465,27 @@
     }
   }
 
+  function rowHTML(value, full, half, empty) {
+    let html = "";
+    for (let i = 0; i < 10; i++) {
+      const v = value - i * 2;
+      html += "<img src='" + (v >= 2 ? full : v >= 1 ? half : empty) + "'>";
+    }
+    return html;
+  }
   function updateVitals(force) {
-    const heartsEl = $("hearts"), airEl = $("air");
+    const heartsEl = $("hearts"), airEl = $("air"), hungerEl = $("hunger");
     if (!player || mode !== "survival") {
       if (heartsEl.childElementCount) heartsEl.innerHTML = "";
       if (airEl.childElementCount) airEl.innerHTML = "";
-      lastHeartHP = -1; lastAirN = -1;
+      if (hungerEl.childElementCount) hungerEl.innerHTML = "";
+      lastHeartHP = -1; lastAirN = -1; lastHungerH = -1;
       return;
     }
     const hp = Math.max(0, Math.min(player.maxHealth, player.health));
-    if (force || hp !== lastHeartHP) {
-      lastHeartHP = hp;
-      let html = "";
-      for (let i = 0; i < 10; i++) {
-        const v = hp - i * 2;
-        const src = v >= 2 ? hearts.full : v >= 1 ? hearts.half : hearts.empty;
-        html += "<img src='" + src + "'>";
-      }
-      heartsEl.innerHTML = html;
-    }
+    if (force || hp !== lastHeartHP) { lastHeartHP = hp; heartsEl.innerHTML = rowHTML(hp, hearts.full, hearts.half, hearts.empty); }
+    const hg = Math.max(0, Math.min(player.maxHunger, player.hunger));
+    if (force || hg !== lastHungerH) { lastHungerH = hg; hungerEl.innerHTML = rowHTML(hg, drum.full, drum.half, drum.empty); }
     const airN = (player.air < player.maxAir - 0.01) ? Math.ceil(player.air) : 0;
     if (force || airN !== lastAirN) {
       lastAirN = airN;
@@ -451,90 +523,177 @@
       "FPS    " + fps.toFixed(0) + "\n" +
       "XYZ    " + p[0].toFixed(1) + " " + p[1].toFixed(1) + " " + p[2].toFixed(1) + "\n" +
       "Mode   " + mode + (player.flying ? " · fly" : "") + (player.inWater ? " · water" : "") + "\n" +
-      (mode === "survival" ? "HP     " + player.health + "/" + player.maxHealth + "\n" : "") +
+      (mode === "survival" ? "HP     " + player.health + "/" + player.maxHealth + "   Food " + Math.round(player.hunger) + "/" + player.maxHunger + "\n" : "") +
       "Time   " + hour.toFixed(1) + "h" + (timeFrozen ? " (frozen)" : "") + "\n" +
       "Chunks " + world.chunks.size + "\n" +
       "Look   " + facing(player.getDir()) + " · " + look;
   }
 
-  // ====================================================== inventory UI
-  function openInventory() {
-    if (!running || dead) return;
-    invOpen = true;
-    renderInventory();
-    $("inventory").classList.remove("hidden");
-    if (document.pointerLockElement) document.exitPointerLock();
-  }
-  function closeInventory() {
-    // return any held stack to the inventory so it isn't lost
-    if (cursor && mode === "survival") inv.add(cursor.id, cursor.count);
-    invOpen = false; cursor = null; updateCursor(); renderHotbar();
-    $("inventory").classList.add("hidden");
-    if (running && !dead) canvas.requestPointerLock();
+  // ====================================================== inventory / containers
+  // Generic cursor-vs-slot interaction over get()/set() accessors.
+  function clickSlot(get, set, right, opts) {
+    opts = opts || {};
+    const slot = get();
+    if (opts.takeOnly) {
+      if (!slot) return;
+      if (!cursor) { cursor = { id: slot.id, count: slot.count }; set(null); }
+      else if (cursor.id === slot.id) {
+        const mv = Math.min(Items.maxStack(slot.id) - cursor.count, slot.count);
+        if (mv > 0) { cursor.count += mv; const rem = slot.count - mv; set(rem > 0 ? { id: slot.id, count: rem } : null); }
+      }
+      return;
+    }
+    const accept = opts.accept || (() => true);
+    if (!right) {
+      if (!cursor) { if (slot) { cursor = { id: slot.id, count: slot.count }; set(null); } }
+      else if (!slot) { if (accept(cursor.id)) { set({ id: cursor.id, count: cursor.count }); cursor = null; } }
+      else if (slot.id === cursor.id) {
+        const mv = Math.min(Items.maxStack(slot.id) - slot.count, cursor.count);
+        set({ id: slot.id, count: slot.count + mv }); cursor.count -= mv; if (cursor.count <= 0) cursor = null;
+      } else if (accept(cursor.id)) { set({ id: cursor.id, count: cursor.count }); cursor = { id: slot.id, count: slot.count }; }
+    } else {
+      if (!cursor) { if (slot) { const half = Math.ceil(slot.count / 2); cursor = { id: slot.id, count: half }; const rem = slot.count - half; set(rem > 0 ? { id: slot.id, count: rem } : null); } }
+      else if (!slot) { if (accept(cursor.id)) { set({ id: cursor.id, count: 1 }); if (--cursor.count <= 0) cursor = null; } }
+      else if (slot.id === cursor.id && slot.count < Items.maxStack(slot.id)) { set({ id: slot.id, count: slot.count + 1 }); if (--cursor.count <= 0) cursor = null; }
+    }
   }
 
-  function makeInvSlot(stack, onClick) {
-    const d = document.createElement("div");
-    d.className = "slot";
+  function makeSlot(stack) {
+    const d = document.createElement("div"); d.className = "slot";
     const cnt = document.createElement("span"); cnt.className = "count";
     d.appendChild(cnt); paintSlot(d, stack);
-    d.addEventListener("mousedown", (e) => { e.preventDefault(); onClick(e.button === 2); });
     d.addEventListener("contextmenu", (e) => e.preventDefault());
     return d;
   }
+  function cursorSlot(get, set, opts) {
+    const d = makeSlot(get());
+    d.addEventListener("mousedown", (e) => { e.preventDefault(); clickSlot(get, set, e.button === 2, opts); renderOpen(); });
+    return d;
+  }
+  function actionSlot(stack, onClick) {
+    const d = makeSlot(stack);
+    d.addEventListener("mousedown", (e) => { e.preventDefault(); onClick(e.button === 2); renderOpen(); });
+    return d;
+  }
+  const invGet = (i) => () => inv.get(i);
+  const invSet = (i) => (s) => inv.set(i, s);
+
+  function renderOpen() {
+    if (invOpen) renderInventory();
+    else if (containerOpen) renderContainer();
+    renderHotbar(); updateCursor();
+  }
+
+  function openInventory() {
+    if (!running || dead || containerOpen) return;
+    invOpen = true; craftN = 2; craftGrid = new Array(4).fill(null);
+    renderInventory(); $("inventory").classList.remove("hidden");
+    if (document.pointerLockElement) document.exitPointerLock();
+  }
+  function closeInventory() {
+    returnCraft();
+    if (cursor) { inv.add(cursor.id, cursor.count); cursor = null; }
+    invOpen = false; updateCursor(); renderHotbar();
+    $("inventory").classList.add("hidden");
+    if (running && !dead) canvas.requestPointerLock();
+  }
+  function openContainer(kind, pos) {
+    if (!running || dead) return;
+    containerOpen = true; containerKind = kind; containerPos = pos;
+    renderContainer(); $("container").classList.remove("hidden");
+    if (document.pointerLockElement) document.exitPointerLock();
+  }
+  function closeContainer() {
+    if (containerKind === "craft") returnCraft();
+    if (cursor) { inv.add(cursor.id, cursor.count); cursor = null; }
+    containerOpen = false; containerKind = null; chestInv = null; furnaceState = null;
+    updateCursor(); renderHotbar();
+    $("container").classList.add("hidden");
+    if (running && !dead) canvas.requestPointerLock();
+  }
+  function returnCraft() {
+    for (let i = 0; i < craftGrid.length; i++) if (craftGrid[i]) { inv.add(craftGrid[i].id, craftGrid[i].count); craftGrid[i] = null; }
+  }
+
+  function gridIds() { return craftGrid.map((s) => (s ? s.id : 0)); }
+  function craftResultStack() { const r = Recipes.match(gridIds(), craftN); return r ? { id: r.id, count: r.count } : null; }
+  function takeCraftResult() {
+    const r = Recipes.match(gridIds(), craftN);
+    if (!r) return;
+    if (cursor && (cursor.id !== r.id || cursor.count + r.count > Items.maxStack(r.id))) return;
+    if (cursor) cursor.count += r.count; else cursor = { id: r.id, count: r.count };
+    for (let i = 0; i < craftGrid.length; i++) if (craftGrid[i] && --craftGrid[i].count <= 0) craftGrid[i] = null;
+  }
+  function craftGridDOM(host, n) {
+    host.className = "grid craftgrid n" + n;
+    for (let i = 0; i < n * n; i++) host.appendChild(cursorSlot(() => craftGrid[i], (s) => { craftGrid[i] = s; }));
+  }
 
   function renderInventory() {
-    const palette = $("invPalette"), mainG = $("invMain"), hotG = $("invHotbar");
+    const palette = $("invPalette"), mainG = $("invMain"), hotG = $("invHotbar"), craft = $("invCraft");
     $("invTitle").textContent = mode === "creative" ? "Creative Inventory" : "Inventory";
     palette.innerHTML = ""; mainG.innerHTML = ""; hotG.innerHTML = "";
-
     if (mode === "creative") {
-      palette.style.display = "flex"; mainG.style.display = "none";
-      $("invHint").innerHTML = "Click a block to assign it to the selected hotbar slot · right-click a slot to clear";
-      Blocks.CREATIVE.forEach((id) => {
-        palette.appendChild(makeInvSlot({ id, count: Infinity }, () => {
-          creativeHotbar[selectedIndex] = id; renderHotbar(); renderInventory();
-        }));
-      });
+      palette.style.display = "flex"; mainG.style.display = "none"; craft.style.display = "none";
+      $("invHint").innerHTML = "Click a block to bind it to the selected hotbar slot · right-click a slot to clear";
+      Blocks.CREATIVE.forEach((id) => palette.appendChild(actionSlot({ id, count: Infinity }, () => {
+        creativeHotbar[selectedIndex] = id;
+      })));
       for (let i = 0; i < 9; i++) {
-        const slot = makeInvSlot(hotStack(i), (right) => {
-          if (right) creativeHotbar[i] = 0; else selectedIndex = i;
-          renderHotbar(); renderInventory();
-        });
+        const slot = actionSlot(hotStack(i), (right) => { if (right) creativeHotbar[i] = 0; else selectedIndex = i; });
         if (i === selectedIndex) slot.classList.add("selected");
         hotG.appendChild(slot);
       }
     } else {
-      palette.style.display = "none"; mainG.style.display = "flex";
+      palette.style.display = "none"; mainG.style.display = "flex"; craft.style.display = "flex";
       $("invHint").innerHTML = "Click to pick up / place · right-click for one · <span class='k'>E</span>/<span class='k'>Esc</span> to close";
-      for (let i = 9; i < 36; i++) mainG.appendChild(makeInvSlot(inv.get(i), (r) => invClick(i, r)));
+      craftGridDOM($("invCraftGrid"), 2);
+      $("invCraftResult").innerHTML = "";
+      $("invCraftResult").appendChild(actionSlot(craftResultStack(), takeCraftResult));
+      for (let i = 9; i < 36; i++) mainG.appendChild(cursorSlot(invGet(i), invSet(i)));
       for (let i = 0; i < 9; i++) {
-        const slot = makeInvSlot(inv.get(i), (r) => invClick(i, r));
+        const slot = cursorSlot(invGet(i), invSet(i));
         if (i === selectedIndex) slot.classList.add("selected");
         hotG.appendChild(slot);
       }
     }
   }
 
-  function invClick(i, right) {
-    const slot = inv.get(i);
-    const max = slot ? Blocks.maxStackOf(slot.id) : 64;
-    if (!right) {
-      if (!cursor) { if (slot) { cursor = { id: slot.id, count: slot.count }; inv.set(i, null); } }
-      else if (!slot) { inv.set(i, cursor); cursor = null; }
-      else if (slot.id === cursor.id) {
-        const mv = Math.min(max - slot.count, cursor.count);
-        slot.count += mv; cursor.count -= mv; inv.set(i, slot);
-        if (cursor.count <= 0) cursor = null;
-      } else { inv.set(i, cursor); cursor = slot; }
-    } else {
-      if (!cursor) { if (slot) { const half = Math.ceil(slot.count / 2); cursor = { id: slot.id, count: half }; inv.removeAt(i, half); } }
-      else if (!slot) { inv.set(i, { id: cursor.id, count: 1 }); if (--cursor.count <= 0) cursor = null; }
-      else if (slot.id === cursor.id && slot.count < Blocks.maxStackOf(slot.id)) {
-        slot.count++; inv.set(i, slot); if (--cursor.count <= 0) cursor = null;
-      }
+  function renderContainer() {
+    const panel = $("ctPanel"), mainG = $("ctMain"), hotG = $("ctHotbar");
+    panel.innerHTML = ""; mainG.innerHTML = ""; hotG.innerHTML = "";
+    if (containerKind === "chest") {
+      $("ctTitle").textContent = "Chest";
+      const g = document.createElement("div"); g.className = "grid";
+      for (let i = 0; i < 27; i++) g.appendChild(cursorSlot(() => chestInv.get(i), (s) => chestInv.set(i, s)));
+      panel.appendChild(g);
+    } else if (containerKind === "craft") {
+      $("ctTitle").textContent = "Crafting Table";
+      const wrap = document.createElement("div"); wrap.className = "craftarea";
+      const grid = document.createElement("div"); craftGridDOM(grid, 3);
+      const arrow = document.createElement("div"); arrow.className = "arrow"; arrow.textContent = "➜";
+      const res = document.createElement("div"); res.className = "grid resultgrid";
+      res.appendChild(actionSlot(craftResultStack(), takeCraftResult));
+      wrap.append(grid, arrow, res); panel.appendChild(wrap);
+    } else if (containerKind === "furnace") {
+      $("ctTitle").textContent = "Furnace";
+      const wrap = document.createElement("div"); wrap.className = "furnace-layout";
+      const col = document.createElement("div"); col.className = "furnace-col";
+      col.appendChild(cursorSlot(() => furnaceState.input, (s) => { furnaceState.input = s; }));
+      const burn = document.createElement("div"); burn.className = "furnace-burn" + (Furnace.lit(furnaceState) ? " lit" : ""); burn.textContent = "🔥";
+      col.appendChild(burn);
+      col.appendChild(cursorSlot(() => furnaceState.fuel, (s) => { furnaceState.fuel = s; }, { accept: (id) => Items.fuelTime(id) > 0 }));
+      const ar = document.createElement("div"); ar.className = "cook-arrow";
+      ar.innerHTML = "<div class='cook-bar'><div class='cook-fill' style='width:" + Math.min(100, furnaceState.cook / Furnace.COOK_TIME * 100) + "%'></div></div>";
+      const out = cursorSlot(() => furnaceState.output, (s) => { furnaceState.output = s; }, { takeOnly: true });
+      wrap.append(col, ar, out); panel.appendChild(wrap);
     }
-    renderInventory(); renderHotbar(); updateCursor();
+    for (let i = 9; i < 36; i++) mainG.appendChild(cursorSlot(invGet(i), invSet(i)));
+    for (let i = 0; i < 9; i++) {
+      const slot = cursorSlot(invGet(i), invSet(i));
+      if (i === selectedIndex) slot.classList.add("selected");
+      hotG.appendChild(slot);
+    }
   }
 
   function updateCursor() {
@@ -615,7 +774,7 @@
     $("respawnBtn").addEventListener("click", respawn);
     $("dQuitBtn").addEventListener("click", quitToMenu);
 
-    canvas.addEventListener("click", () => { if (running && !invOpen && !dead) canvas.requestPointerLock(); });
+    canvas.addEventListener("click", () => { if (running && !anyUIOpen()) canvas.requestPointerLock(); });
     canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
     document.addEventListener("pointerlockchange", () => {
@@ -625,13 +784,14 @@
         mouseDown[0] = mouseDown[2] = false; resetMine();
         if (dead) $("death").classList.remove("hidden");
         else if (invOpen) $("inventory").classList.remove("hidden");
+        else if (containerOpen) $("container").classList.remove("hidden");
         else { $("pModeBtn").textContent = "Mode: " + mode; $("pause").classList.remove("hidden"); saveCurrent(); }
       }
     });
 
     document.addEventListener("mousemove", (e) => {
       if (locked) player.applyMouse(e.movementX || 0, e.movementY || 0);
-      else if (invOpen) { mouseX = e.clientX; mouseY = e.clientY; updateCursor(); }
+      else if (invOpen || containerOpen) { mouseX = e.clientX; mouseY = e.clientY; updateCursor(); }
     });
     document.addEventListener("mousedown", (e) => {
       if (!locked) return;
@@ -639,8 +799,11 @@
       const eye = player.getEye(), dir = player.getDir();
       const target = world.raycast(eye, dir, REACH);
       if (e.button === 0) { mouseDown[0] = true; if (player.creative) { breakInstant(target); breakTimer = 0.2; } else breakTimer = 0; }
-      else if (e.button === 2) { mouseDown[2] = true; place(target); placeTimer = 0.22; }
-      else if (e.button === 1) pickBlock(target);
+      else if (e.button === 2) {
+        const tid = target ? world.getBlock(target.hit[0], target.hit[1], target.hit[2]) : 0;
+        if (tid && Blocks.interactOf(tid)) { interactBlock(tid, target.hit); }   // open/toggle, don't place
+        else { mouseDown[2] = true; eatTimer = 0; if (!heldFood()) { place(target); placeTimer = 0.22; } }
+      } else if (e.button === 1) pickBlock(target);
     });
     document.addEventListener("mouseup", (e) => {
       if (e.button === 0) { mouseDown[0] = false; resetMine(); }
@@ -659,8 +822,11 @@
       keys[e.code] = true;
       if (locked && GAME_KEYS.has(e.code)) e.preventDefault();
       if (!running) return;
-      if (e.code === "KeyE") { if (locked) openInventory(); else if (invOpen) closeInventory(); return; }
-      if (e.code === "Escape") { if (invOpen) closeInventory(); return; }
+      if (e.code === "KeyE") {
+        if (locked) openInventory(); else if (invOpen) closeInventory(); else if (containerOpen) closeContainer();
+        return;
+      }
+      if (e.code === "Escape") { if (invOpen) closeInventory(); else if (containerOpen) closeContainer(); return; }
       if (!locked) return;
       if (e.code === "KeyW" && !e.repeat) { const t = performance.now(); if (t - lastW < 260) wSprint = true; lastW = t; }
       if (e.code.startsWith("Digit")) { const n = parseInt(e.code.slice(5), 10); if (n >= 1 && n <= 9) { selectedIndex = n - 1; renderHotbar(); } }

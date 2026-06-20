@@ -103,6 +103,55 @@
     iron_ore(p) { ore(p, [200, 170, 140]); },
     gold_ore(p) { ore(p, [240, 200, 70]); },
     diamond_ore(p) { ore(p, [110, 220, 220]); },
+    chest(p) {
+      p.noisy([150, 110, 60], 12);
+      for (let x = 0; x < 16; x++) { p.px(x, 7, 90, 62, 30); p.px(x, 8, 90, 62, 30); }
+      for (let y = 0; y < 16; y++) { p.px(0, y, 90, 62, 30); p.px(15, y, 90, 62, 30); }
+      p.px(7, 7, 70, 70, 72); p.px(8, 7, 70, 70, 72); p.px(7, 8, 70, 70, 72); p.px(8, 8, 70, 70, 72);
+    },
+    craft_top(p) {
+      p.noisy([164, 124, 76], 10);
+      for (let i = 0; i < 16; i++) { p.px(i, 5, 110, 80, 46); p.px(i, 10, 110, 80, 46); p.px(5, i, 110, 80, 46); p.px(10, i, 110, 80, 46); }
+    },
+    craft_side(p) {
+      p.noisy([150, 112, 68], 10);
+      for (let y = 0; y < 16; y += 4) for (let x = 0; x < 16; x++) p.px(x, y, 110, 80, 46);
+      for (let x = 2; x < 14; x += 2) p.px(x, 3, 90, 90, 92);
+    },
+    furnace_side(p) {
+      p.noisy([120, 120, 122], 14);
+      for (let i = 0; i < 18; i++) { const x = (p.rng() * 16) | 0, y = (p.rng() * 16) | 0; p.px(x, y, 80, 80, 84); }
+    },
+    furnace_top(p) {
+      p.noisy([120, 120, 122], 12);
+      for (let x = 5; x < 11; x++) for (let y = 5; y < 11; y++) p.px(x, y, 60, 60, 64);
+      for (let x = 6; x < 10; x++) for (let y = 6; y < 10; y++) p.px(x, y, 30, 30, 34);
+    },
+    furnace_front(p) {
+      p.noisy([120, 120, 122], 12);
+      for (let x = 4; x < 12; x++) for (let y = 7; y < 14; y++) p.px(x, y, 30, 28, 26);
+      for (let x = 5; x < 11; x++) p.px(x, 6, 44, 42, 40);
+      for (let x = 4; x < 12; x++) p.px(x, 4, 80, 80, 84);
+    },
+    furnace_lit(p) {
+      p.noisy([120, 120, 122], 12);
+      for (let x = 4; x < 12; x++) for (let y = 7; y < 14; y++) { const g = (p.rng() * 60) | 0; p.px(x, y, 235, 120 + g, 30); }
+      for (let x = 5; x < 11; x++) p.px(x, 6, 255, 205, 90);
+      for (let x = 4; x < 12; x++) p.px(x, 4, 80, 80, 84);
+    },
+    door(p) {
+      p.noisy([150, 110, 66], 8);
+      for (let y = 0; y < 16; y++) { p.px(0, y, 100, 72, 36); p.px(15, y, 100, 72, 36); }
+      for (let x = 3; x < 13; x++) { p.px(x, 2, 110, 80, 42); p.px(x, 7, 110, 80, 42); p.px(x, 13, 110, 80, 42); }
+      for (let y = 2; y <= 13; y++) { p.px(3, y, 110, 80, 42); p.px(12, y, 110, 80, 42); }
+      p.px(11, 9, 60, 60, 62); p.px(11, 10, 60, 60, 62);
+    },
+    door_open(p) {
+      for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
+        if (x < 3) { const d = (p.rng() * 2 - 1) * 10; p.px(x, y, 150 + d, 110 + d, 66 + d); }
+        else p.px(x, y, 0, 0, 0, 0); // transparent (alpha cutout) -> open doorway
+      }
+    },
   };
 
   function ore(p, speck) {

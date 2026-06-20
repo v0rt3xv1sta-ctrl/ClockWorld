@@ -1,15 +1,14 @@
 /*
  * Headless smoke test. Stubs the browser (DOM, WebGL, 2D canvas, localStorage,
  * pointer lock, rAF) and runs the real game scripts end to end: world menu ->
- * create world -> survival play (move/mine/place) -> inventory -> switch to
- * creative -> fly/break -> pause/resume -> quit. Surfaces wiring/reference
- * errors without a real browser.
+ * survival play (move/mine, inventory + crafting grid) -> creative (fly, bind
+ * blocks, place & open a chest / crafting table / furnace, toggle a door) ->
+ * quit. Surfaces wiring/reference errors without a real browser.
  */
 const fs = require("fs");
 const vm = require("vm");
 const path = require("path");
 
-// ---- WebGL stub ----
 function makeGL() {
   const fns = {
     getShaderParameter: () => true, getProgramParameter: () => true,
@@ -19,16 +18,10 @@ function makeGL() {
     createBuffer: () => ({}), createTexture: () => ({}), getExtension: () => ({}),
   };
   return new Proxy(fns, {
-    get(t, p) {
-      if (p in t) return t[p];
-      if (typeof p === "string" && /^[A-Z0-9_]+$/.test(p)) return 1;
-      return () => {};
-    },
+    get(t, p) { if (p in t) return t[p]; if (typeof p === "string" && /^[A-Z0-9_]+$/.test(p)) return 1; return () => {}; },
   });
 }
 const gl = makeGL();
-
-// 2D context: no-op methods, settable props.
 function make2D() {
   return new Proxy({}, {
     get(t, p) { return /Style$|imageSmoothingEnabled|lineWidth|globalAlpha|font|width|height/.test(p) ? "" : () => {}; },
@@ -36,7 +29,6 @@ function make2D() {
   });
 }
 
-// ---- DOM ----
 const docListeners = {};
 function dispatch(type, ev) { (docListeners[type] || []).forEach((cb) => cb(ev || {})); }
 
@@ -48,7 +40,7 @@ function makeEl() {
     append(...cs) { cs.forEach((c) => this._children.push(c)); },
     addEventListener(t, cb) { (this._l[t] = this._l[t] || []).push(cb); },
     removeEventListener() {},
-    dispatch(t, ev) { (this._l[t] || []).forEach((cb) => cb(ev || { preventDefault() {} })); },
+    dispatch(t, ev) { (this._l[t] || []).forEach((cb) => cb(ev || { preventDefault() {}, button: 0 })); },
     setAttribute() {}, removeAttribute() {}, getAttribute() { return null; },
     requestPointerLock() { sandbox.document.pointerLockElement = this; dispatch("pointerlockchange"); },
     click() { this.dispatch("click", { preventDefault() {} }); },
@@ -65,24 +57,19 @@ function makeEl() {
 }
 
 const els = {};
-function mem() {
-  const m = {};
-  return { getItem: (k) => (k in m ? m[k] : null), setItem: (k, v) => { m[k] = String(v); }, removeItem: (k) => { delete m[k]; } };
-}
+function mem() { const m = {}; return { getItem: (k) => (k in m ? m[k] : null), setItem: (k, v) => { m[k] = String(v); }, removeItem: (k) => { delete m[k]; } }; }
 
 const sandbox = {};
 sandbox.window = sandbox; sandbox.globalThis = sandbox; sandbox.self = sandbox;
-sandbox.console = console;
-sandbox.devicePixelRatio = 1;
+sandbox.console = console; sandbox.devicePixelRatio = 1;
 sandbox.performance = { now: () => Date.now() };
 sandbox.WebGL2RenderingContext = function () {};
 sandbox.setInterval = () => 0; sandbox.clearInterval = () => {};
 sandbox.setTimeout = (fn) => { if (typeof fn === "function") fn(); return 0; };
 sandbox.addEventListener = () => {}; sandbox.removeEventListener = () => {};
 sandbox.confirm = () => true; sandbox.alert = () => {};
-sandbox.Blob = function () {};
-sandbox.URL = { createObjectURL: () => "blob:x", revokeObjectURL() {} };
-sandbox.FileReader = function () { this.readAsText = () => { this.result = '{"format":"clockworld","version":1,"meta":{"name":"x","seed":1,"mode":"survival"},"data":{"seed":1,"mode":"survival","edits":{}}}'; if (this.onload) this.onload(); }; };
+sandbox.Blob = function () {}; sandbox.URL = { createObjectURL: () => "blob:x", revokeObjectURL() {} };
+sandbox.FileReader = function () { this.readAsText = () => { this.result = "{}"; if (this.onload) this.onload(); }; };
 sandbox.localStorage = mem();
 let rafCb = null;
 sandbox.requestAnimationFrame = (cb) => { rafCb = cb; return 1; };
@@ -97,73 +84,93 @@ sandbox.document = {
 };
 const EV = { preventDefault() {}, stopPropagation() {} };
 
-// ---- load scripts ----
 const ctx = vm.createContext(sandbox);
-["math", "noise", "blocks", "inventory", "saves", "textures", "world", "renderer", "player", "main"]
+["math", "noise", "blocks", "items", "recipes", "furnace", "inventory", "saves", "textures", "world", "renderer", "player", "net", "main"]
   .forEach((f) => vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "js", f + ".js"), "utf8"), ctx, { filename: f + ".js" }));
 
+const B = sandbox.Blocks;
 let frames = 0, t = 1000;
 function run(n) { for (let i = 0; i < n; i++) { if (!rafCb) throw new Error("no frame scheduled"); const cb = rafCb; rafCb = null; cb((t += 16)); frames++; } }
+function key(code, extra) { dispatch("keydown", Object.assign({ code, repeat: false }, EV, extra)); }
+function keyUp(code) { dispatch("keyup", Object.assign({ code }, EV)); }
+function mdown(button) { dispatch("mousedown", Object.assign({ button }, EV)); }
+function mup(button) { dispatch("mouseup", Object.assign({ button }, EV)); }
+function assert(c, m) { if (!c) throw new Error("assert: " + m); }
 
-// menu visible, world rendering behind it
+// menu -> create a survival world
 run(2);
-
-// create a survival world and start playing
 els.createBtn.dispatch("click", EV);
-if (sandbox.document.pointerLockElement !== els.game) throw new Error("world did not lock pointer on start");
+assert(sandbox.document.pointerLockElement === els.game, "world locked pointer");
 run(3);
 
-// look + move + mine + place (survival)
-dispatch("mousemove", Object.assign({ movementX: 15, movementY: -5 }, EV));
-dispatch("keydown", Object.assign({ code: "KeyW", repeat: false }, EV));
-dispatch("mousedown", Object.assign({ button: 0 }, EV)); // start mining
-run(30);
-dispatch("mouseup", Object.assign({ button: 0 }, EV));
-dispatch("keydown", Object.assign({ code: "Digit2", repeat: false }, EV));
-dispatch("mousedown", Object.assign({ button: 2 }, EV)); // place
-run(8);
-dispatch("mouseup", Object.assign({ button: 2 }, EV));
+// survival: look, move, mine
+dispatch("mousemove", Object.assign({ movementX: 12, movementY: -3 }, EV));
+key("KeyW"); mdown(0); run(25); mup(0); keyUp("KeyW");
 
-// open inventory, click a couple of slots, close
-dispatch("keydown", Object.assign({ code: "KeyE", repeat: false }, EV));
-if (els.inventory.classList.contains("hidden")) throw new Error("inventory did not open");
-if (els.invMain._children[0]) els.invMain._children[0].dispatch("mousedown", Object.assign({ button: 0 }, EV));
-if (els.invHotbar._children[0]) els.invHotbar._children[0].dispatch("mousedown", Object.assign({ button: 0 }, EV));
-dispatch("mousemove", Object.assign({ clientX: 100, clientY: 100 }, EV));
-dispatch("keydown", Object.assign({ code: "KeyE", repeat: false }, EV)); // close -> relock
-run(3);
+// inventory + 2x2 crafting grid open/click/close
+key("KeyE");
+assert(!els.inventory.classList.contains("hidden"), "inventory opened");
+if (els.invCraftGrid._children[0]) els.invCraftGrid._children[0].dispatch("mousedown", { button: 0, preventDefault() {} });
+if (els.invCraftResult._children[0]) els.invCraftResult._children[0].dispatch("mousedown", { button: 0, preventDefault() {} });
+if (els.invMain._children[0]) els.invMain._children[0].dispatch("mousedown", { button: 2, preventDefault() {} });
+key("KeyE");
+run(2);
 
-// switch to creative via pause, then fly + instant break
+// switch to creative
 els.pModeBtn.dispatch("click", EV);
-dispatch("keydown", Object.assign({ code: "KeyF", repeat: false }, EV));
-dispatch("keydown", Object.assign({ code: "Space", repeat: false }, EV));
-dispatch("mousedown", Object.assign({ button: 0 }, EV));
-run(20);
-dispatch("mousedown", Object.assign({ button: 1 }, EV)); // pick block
-dispatch("mouseup", Object.assign({ button: 0 }, EV));
-
-// creative inventory (palette) open/close
-dispatch("keydown", Object.assign({ code: "KeyE", repeat: false }, EV));
-if (els.invPalette._children[0]) els.invPalette._children[0].dispatch("mousedown", Object.assign({ button: 0 }, EV));
-dispatch("keydown", Object.assign({ code: "Escape" }, EV));
-run(3);
-
-// pause (esc -> unlock) then resume
-sandbox.document.exitPointerLock();
-if (els.pause.classList.contains("hidden")) throw new Error("pause did not show on unlock");
-els.resumeBtn.dispatch("click", EV);
-run(3);
-
-// respawn button path (harmless when alive) + quit to menu
-els.respawnBtn.dispatch("click", EV);
 run(2);
+
+// helper: bind a creative block to hotbar slot 0, then place & interact below
+function bind(blockId) {
+  key("KeyE"); // creative inventory (palette)
+  const idx = B.CREATIVE.indexOf(blockId);
+  els.invPalette._children[idx].dispatch("mousedown", { button: 0, preventDefault() {} });
+  key("KeyE");
+}
+function lookDownAndRise() {
+  key("Space"); run(14); keyUp("Space");          // fly up a couple of blocks
+  dispatch("mousemove", Object.assign({ movementX: 0, movementY: 1200 }, EV)); // look straight down
+}
+
+lookDownAndRise();
+
+// chest: place then open
+bind(B.ID.CHEST);
+mdown(2); mup(2);              // places chest below
+run(2);
+mdown(2);                     // right-click the chest -> open container
+let openedChest = !els.container.classList.contains("hidden");
+if (openedChest && els.ctMain._children[0]) els.ctMain._children[0].dispatch("mousedown", { button: 0, preventDefault() {} });
+if (openedChest) { key("KeyE"); run(2); }
+
+// crafting table
+bind(B.ID.CRAFTING);
+mdown(2); mup(2); run(2);
+mdown(2);
+let openedCraft = !els.container.classList.contains("hidden");
+if (openedCraft) { key("KeyE"); run(2); }
+
+// furnace (let it tick a few frames while open)
+bind(B.ID.FURNACE);
+mdown(2); mup(2); run(2);
+mdown(2);
+let openedFurnace = !els.container.classList.contains("hidden");
+if (openedFurnace) { run(8); key("KeyE"); run(2); }
+
+// door: place and toggle (no UI)
+bind(B.ID.DOOR);
+mdown(2); mup(2); run(2);
+mdown(2); run(2); // toggles door open/closed
+
+assert(openedChest, "chest container opened");
+assert(openedCraft, "crafting table container opened");
+assert(openedFurnace, "furnace container opened");
+
+// quit to menu and confirm persistence
 els.quitBtn.dispatch("click", EV);
-if (els.menu.classList.contains("hidden")) throw new Error("quit did not return to menu");
-run(2);
-
-// the world we created should be persisted and listed
+assert(!els.menu.classList.contains("hidden"), "returned to menu");
 const reg = JSON.parse(sandbox.localStorage.getItem("clockworld_worlds") || "{}");
-if (Object.keys(reg).length < 1) throw new Error("world was not saved to storage");
+assert(Object.keys(reg).length >= 1, "world saved to storage");
 
 if (frames < 70) throw new Error("too few frames: " + frames);
-console.log("Smoke test OK — ran " + frames + " frames through menu, survival, inventory, creative, pause and quit.");
+console.log("Smoke test OK — " + frames + " frames: survival, crafting, chest/table/furnace/door, quit.");

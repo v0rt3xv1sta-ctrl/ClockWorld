@@ -325,4 +325,89 @@ function transformPoint(m, p, w = 1) {
   ok("water physics: can swim up and climb out onto a higher bank");
 })();
 
+// ---- items ----
+(function () {
+  const Items = require("../js/items.js");
+  const B = Blocks.ID, IT = Items.ITEM;
+  assert(Items.isBlock(B.STONE) && !Items.isBlock(IT.APPLE), "block vs item id");
+  assert(Items.name(IT.APPLE) === "Apple" && Items.name(B.STONE) === "Stone", "names");
+  assert(Items.isFood(IT.APPLE) && !Items.isFood(B.STONE), "food flag");
+  assert(Items.food(IT.BREAD).hunger === 6, "bread restores 6");
+  assert(Items.fuelTime(IT.COAL) === 8 && Items.fuelTime(B.PLANKS) === 1.5, "fuel times");
+  assert(Items.smeltResult(B.IRON_ORE) === IT.IRON_INGOT && Items.smeltResult(B.SAND) === B.GLASS, "smelting");
+  assert(Items.isPlaceable(B.STONE) && !Items.isPlaceable(IT.STICK), "placeable");
+  ok("items registry (food/fuel/smelt/placeable)");
+})();
+
+// ---- crafting recipes ----
+(function () {
+  const Items = require("../js/items.js");
+  const Recipes = require("../js/recipes.js");
+  const B = Blocks.ID, IT = Items.ITEM, P = Blocks.ID.PLANKS, C = Blocks.ID.COBBLE;
+  let r = Recipes.match([B.LOG, 0, 0, 0], 2);
+  assert(r && r.id === P && r.count === 4, "log -> 4 planks (shapeless)");
+  r = Recipes.match([P, 0, P, 0], 2);
+  assert(r && r.id === IT.STICK && r.count === 4, "2 planks -> 4 sticks (shaped)");
+  r = Recipes.match([P, P, P, P], 2);
+  assert(r && r.id === B.CRAFTING, "2x2 planks -> crafting table");
+  r = Recipes.match([P, P, P, P, 0, P, P, P, P], 3);
+  assert(r && r.id === B.CHEST, "planks ring -> chest");
+  r = Recipes.match([C, C, C, C, 0, C, C, C, C], 3);
+  assert(r && r.id === B.FURNACE, "cobble ring -> furnace");
+  r = Recipes.match([P, P, 0, P, P, 0, P, P, 0], 3);
+  assert(r && r.id === B.DOOR, "2x3 planks -> door");
+  r = Recipes.match([IT.WHEAT, IT.WHEAT, IT.WHEAT, 0, 0, 0, 0, 0, 0], 3);
+  assert(r && r.id === IT.BREAD, "3 wheat -> bread");
+  assert(Recipes.match([B.STONE, 0, 0, 0], 2) === null, "no recipe -> null");
+  ok("crafting recipe matching (shaped + shapeless)");
+})();
+
+// ---- furnace ----
+(function () {
+  const Items = require("../js/items.js");
+  const Furnace = require("../js/furnace.js");
+  const f = Furnace.create();
+  f.input = { id: Blocks.ID.IRON_ORE, count: 2 };
+  f.fuel = { id: Items.ITEM.COAL, count: 1 };
+  let everLit = false;
+  for (let i = 0; i < 7 * 60; i++) { Furnace.tick(f, 1 / 60); if (Furnace.lit(f)) everLit = true; }
+  assert(everLit, "furnace lit while burning");
+  assert(f.output && f.output.id === Items.ITEM.IRON_INGOT && f.output.count >= 1, "smelted iron ingot");
+  assert(f.input && f.input.count === 1, "consumed one ore");
+  ok("furnace smelting (fuel -> cook -> output)");
+
+  const idle = Furnace.create();
+  idle.fuel = { id: Items.ITEM.COAL, count: 1 };
+  for (let i = 0; i < 60; i++) Furnace.tick(idle, 1 / 60);
+  assert(!Furnace.lit(idle) && idle.fuel.count === 1, "no fuel burned without smeltable input");
+  ok("furnace stays idle with nothing to smelt");
+})();
+
+// ---- hunger & eating ----
+(function () {
+  const Items = require("../js/items.js");
+  const Player = global.Player;
+  const w = new W.World(2); w.getOrCreateChunk(0, 0);
+  let sy = W.HEIGHT - 1; while (sy > 0 && !Blocks.isSolid(w.getBlock(0, sy, 0))) sy--;
+  const still = { f: 0, b: 0, l: 0, r: 0, jump: 0, descend: 0, sprint: 0, sneak: 0 };
+
+  const p = new Player([0.5, sy + 1, 0.5], "survival");
+  p.hunger = 10; p.eat(Items.food(Items.ITEM.BREAD));
+  assert(p.hunger === 16, "eating bread restores hunger");
+  p.hunger = 20; p.saturation = 0; p.addExhaustion(4);
+  assert(p.hunger === 19, "exhaustion drains hunger when no saturation");
+  ok("hunger: eating + exhaustion");
+
+  const c = new Player([0.5, sy + 1, 0.5], "creative");
+  for (let i = 0; i < 600; i++) c.update(1 / 60, w, { f: 1, sprint: 1 });
+  assert(c.hunger === c.maxHunger, "creative never gets hungry");
+  ok("creative ignores hunger");
+
+  const s = new Player([0.5, sy + 1, 0.5], "survival");
+  s.hunger = 0; s.health = 5;
+  for (let i = 0; i < 60 * 12; i++) s.update(1 / 60, w, still);
+  assert(s.health < 5 && s.health >= 1, "starvation hurts down to a floor (hp=" + s.health + ")");
+  ok("survival starvation");
+})();
+
 console.log("\nAll " + passed + " test groups passed.");
