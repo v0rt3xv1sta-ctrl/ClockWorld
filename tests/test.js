@@ -173,9 +173,8 @@ function transformPoint(m, p, w = 1) {
   assert(p.pos[0] > wallX - Player.HALF - 0.1, "advanced up against wall");
   ok("horizontal collision stops at wall");
 
-  // fly mode: no gravity, ascends on jump
-  const f = new Player([0.5, sy + 6, 0.5]);
-  f.toggleFly();
+  // fly mode: no gravity, ascends on jump (creative flies by default)
+  const f = new Player([0.5, sy + 6, 0.5], "creative");
   const up = { f: 0, b: 0, l: 0, r: 0, jump: 1, descend: 0, sprint: 0, sneak: 0 };
   const y0 = f.pos[1];
   for (let i = 0; i < 60; i++) f.update(1 / 60, w, up);
@@ -194,6 +193,111 @@ function transformPoint(m, p, w = 1) {
   assert(p.intersectsBlock(Math.floor(p.pos[0]), Math.floor(p.pos[1]), Math.floor(p.pos[2])),
     "AABB intersects own cell (blocks self-placement)");
   ok("intersectsBlock self-placement guard");
+})();
+
+// ---- inventory ----
+(function () {
+  const { Inventory } = require("../js/inventory.js");
+  const DIRT = Blocks.ID.DIRT, STONE = Blocks.ID.STONE;
+  const inv = new Inventory(36);
+  assert(inv.add(DIRT, 100) === 0, "100 dirt fits");
+  assert(inv.countOf(DIRT) === 100, "counts 100 dirt");
+  assert(inv.get(0).count === 64 && inv.get(1).count === 36, "stacks split at 64");
+  inv.add(DIRT, 30);
+  assert(inv.countOf(DIRT) === 130 && inv.get(1).count === 64, "tops up existing stack first");
+  inv.removeAt(0, 10);
+  assert(inv.get(0).count === 54, "removeAt reduces stack");
+  ok("inventory add/stack/remove");
+
+  const small = new Inventory(1);
+  assert(small.add(STONE, 100) === 100 - 64, "overflow returned when full");
+  assert(small.countOf(STONE) === 64, "full slot holds one max stack");
+  ok("inventory overflow handling");
+
+  const j = inv.toJSON();
+  const inv2 = Inventory.fromJSON(j, 36);
+  assert(inv2.countOf(DIRT) === inv.countOf(DIRT), "serialize round-trip");
+  ok("inventory serialization");
+})();
+
+// ---- saves ----
+(function () {
+  const { Saves } = require("../js/saves.js");
+  const mem = (() => {
+    const m = {};
+    return { getItem: (k) => (k in m ? m[k] : null), setItem: (k, v) => { m[k] = String(v); }, removeItem: (k) => { delete m[k]; } };
+  })();
+  const sv = new Saves(mem);
+  const meta = sv.create("Test", 123, "creative");
+  assert(meta.id && meta.mode === "creative" && meta.seed === 123, "create returns meta");
+  assert(sv.list().length === 1 && sv.list()[0].name === "Test", "world listed");
+  const loaded = sv.load(meta.id);
+  assert(loaded.data.seed === 123 && loaded.data.mode === "creative", "load returns data");
+  loaded.data.edits["1,2,3"] = 5; loaded.data.time = 0.7;
+  sv.save(meta.id, loaded.data);
+  assert(sv.load(meta.id).data.edits["1,2,3"] === 5, "edits persisted");
+  sv.rename(meta.id, "Renamed");
+  assert(sv.load(meta.id).meta.name === "Renamed", "rename works");
+  ok("saves create/load/save/rename");
+
+  const json = sv.exportWorld(meta.id);
+  const imp = sv.importWorld(json);
+  assert(imp && imp.id !== meta.id, "import creates a new world");
+  assert(sv.list().length === 2, "two worlds after import");
+  assert(sv.load(imp.id).data.edits["1,2,3"] === 5, "imported edits carried over");
+  assert(sv.importWorld("garbage") === null, "bad import rejected");
+  sv.remove(meta.id);
+  assert(sv.list().length === 1 && !sv.load(meta.id), "remove deletes world");
+  ok("saves export/import/remove");
+})();
+
+// ---- modes, health & damage ----
+(function () {
+  const Player = global.Player;
+  const w = new W.World(321);
+  w.getOrCreateChunk(0, 0);
+  let sy = W.HEIGHT - 1;
+  while (sy > 0 && !Blocks.isSolid(w.getBlock(0, sy, 0))) sy--;
+  const still = { f: 0, b: 0, l: 0, r: 0, jump: 0, descend: 0, sprint: 0, sneak: 0 };
+
+  // survival fall damage
+  const sp = new Player([0.5, sy + 25, 0.5], "survival");
+  assert(!sp.flying, "survival starts grounded (not flying)");
+  for (let i = 0; i < 400; i++) sp.update(1 / 60, w, still);
+  assert(sp.health < sp.maxHealth, "survival took fall damage (hp=" + sp.health + ")");
+  ok("survival fall damage on big drop");
+
+  // creative invulnerability + flying default
+  const cp = new Player([0.5, sy + 25, 0.5], "creative");
+  assert(cp.flying, "creative starts flying");
+  cp.flying = false; // drop it
+  for (let i = 0; i < 400; i++) cp.update(1 / 60, w, still);
+  assert(cp.health === cp.maxHealth, "creative immune to fall damage");
+  ok("creative invulnerability");
+
+  // drowning: submerge the head and drain air -> damage
+  const dp = new Player([0.5, sy + 1, 0.5], "survival");
+  for (let y = sy + 1; y <= sy + 6; y++) w.setBlock(0, y, 0, Blocks.ID.WATER);
+  for (let i = 0; i < 60 * 20; i++) dp.update(1 / 60, w, still); // 20s underwater
+  assert(dp.air === 0, "air depleted underwater");
+  assert(dp.health < dp.maxHealth, "drowning dealt damage (hp=" + dp.health + ")");
+  ok("survival drowning");
+
+  // mode switch disables flying
+  const mp = new Player([0.5, sy + 5, 0.5], "creative");
+  mp.setMode("survival");
+  assert(!mp.creative && !mp.flying, "switching to survival disables fly");
+  mp.toggleFly();
+  assert(!mp.flying, "cannot fly in survival");
+  ok("mode switching");
+
+  // death + respawn
+  const xp = new Player([0.5, sy + 5, 0.5], "survival");
+  xp.hurt(100);
+  assert(xp.dead && xp.health === 0, "lethal damage kills");
+  xp.respawn([0.5, sy + 3, 0.5]);
+  assert(!xp.dead && xp.health === xp.maxHealth, "respawn restores health");
+  ok("death and respawn");
 })();
 
 console.log("\nAll " + passed + " test groups passed.");

@@ -15,15 +15,58 @@
   const WALK = 4.4, SPRINT = 6.2, SNEAK = 1.7, FLY = 11, SWIM = 4.0;
   const SENS = 0.0023, PITCH_LIMIT = Math.PI / 2 - 0.01;
 
-  function Player(spawn) {
+  const MAX_HEALTH = 20, MAX_AIR = 10; // air in seconds underwater before drowning
+
+  function Player(spawn, mode) {
     this.pos = spawn.slice();
+    this.spawn = spawn.slice();
     this.vel = [0, 0, 0];
     this.yaw = 0;
     this.pitch = 0;
     this.onGround = false;
+    this.onGroundPrev = false;
     this.flying = false;
     this.inWater = false;
+    this.mode = mode === "creative" ? "creative" : "survival";
+    this.creative = this.mode === "creative";
+    if (this.creative) this.flying = true;
+    this.health = MAX_HEALTH;
+    this.maxHealth = MAX_HEALTH;
+    this.air = MAX_AIR;
+    this.maxAir = MAX_AIR;
+    this.dead = false;
+    this.fallPeak = spawn[1];
+    this._drownAcc = 0;
+    this._hurtFlash = 0; // seconds remaining on the red damage flash
   }
+
+  Player.prototype.setMode = function (mode) {
+    this.mode = mode === "creative" ? "creative" : "survival";
+    this.creative = this.mode === "creative";
+    if (!this.creative) { this.flying = false; }
+    else { this.health = this.maxHealth; this.air = this.maxAir; this.dead = false; }
+  };
+
+  Player.prototype.hurt = function (amount) {
+    if (this.creative || this.dead || amount <= 0) return;
+    this.health -= amount;
+    this._hurtFlash = 0.35;
+    if (this.health <= 0) { this.health = 0; this.dead = true; }
+  };
+
+  Player.prototype.heal = function (amount) {
+    this.health = Math.min(this.maxHealth, this.health + amount);
+  };
+
+  Player.prototype.respawn = function (spawn) {
+    this.pos = (spawn || this.spawn).slice();
+    this.vel = [0, 0, 0];
+    this.health = this.maxHealth;
+    this.air = this.maxAir;
+    this.dead = false;
+    this.fallPeak = this.pos[1];
+    this._drownAcc = 0;
+  };
 
   Player.prototype.applyMouse = function (dx, dy) {
     this.yaw -= dx * SENS;
@@ -39,6 +82,7 @@
   Player.prototype.getEye = function () { return [this.pos[0], this.pos[1] + EYE, this.pos[2]]; };
 
   Player.prototype.toggleFly = function () {
+    if (!this.creative) return; // flying is creative-only
     this.flying = !this.flying;
     this.vel[1] = 0;
   };
@@ -123,13 +167,46 @@
       }
     }
 
+    const wasAirborne = !this.onGroundPrev;
     this.collideAxis(world, 0, this.vel[0] * dt);
     this.collideAxis(world, 2, this.vel[2] * dt);
     this.collideAxis(world, 1, this.vel[1] * dt);
+
+    // fall damage on landing (survival only; ignored while flying/swimming)
+    if (this.onGround) {
+      if (wasAirborne && !this.flying && !this.inWater) {
+        const fall = this.fallPeak - this.pos[1];
+        if (fall > 3) this.hurt(Math.floor(fall - 3));
+      }
+      this.fallPeak = this.pos[1];
+    } else if (this.pos[1] > this.fallPeak) {
+      this.fallPeak = this.pos[1];
+    }
+    if (this.flying || this.inWater) this.fallPeak = this.pos[1];
     this.onGroundPrev = this.onGround;
 
-    // safety: never fall out of the world
-    if (this.pos[1] < -10) { this.pos[1] = 80; this.vel[1] = 0; }
+    // drowning: a submerged head drains air, then deals 1 damage per second
+    const eyeBlock = world.getBlock(
+      Math.floor(this.pos[0]), Math.floor(this.pos[1] + EYE), Math.floor(this.pos[2]));
+    if (Blocks.isLiquid(eyeBlock) && !this.creative) {
+      this.air -= dt;
+      if (this.air <= 0) {
+        this.air = 0;
+        this._drownAcc += dt;
+        if (this._drownAcc >= 1) { this.hurt(1); this._drownAcc -= 1; }
+      }
+    } else {
+      this.air = Math.min(this.maxAir, this.air + dt * 3);
+      this._drownAcc = 0;
+    }
+
+    // the void
+    if (this.pos[1] < -20) {
+      if (this.creative) { this.pos[1] = 100; this.vel[1] = 0; }
+      else this.hurt(this.maxHealth);
+    }
+
+    if (this._hurtFlash > 0) this._hurtFlash -= dt;
   };
 
   global.Player = Player;

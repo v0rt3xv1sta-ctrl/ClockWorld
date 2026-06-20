@@ -164,6 +164,14 @@
     this.meshes.delete(key);
   };
 
+  // Clear the screen to a flat colour (used by the menu before a world loads).
+  Renderer.prototype.clear = function (rgb) {
+    const gl = this.gl;
+    this.resize();
+    gl.clearColor(rgb[0], rgb[1], rgb[2], 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  };
+
   Renderer.prototype.resize = function () {
     const c = this.canvas;
     const w = Math.floor(c.clientWidth * (window.devicePixelRatio || 1));

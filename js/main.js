@@ -1,94 +1,140 @@
 /*
- * main.js — game bootstrap and loop.
+ * main.js — game bootstrap, UI and loop.
  *
- * Owns the DOM, input, chunk streaming around the player, the day/night cycle,
- * the hotbar/HUD, block break & place, and localStorage save/load. All the
- * heavy lifting lives in the other modules; this file just orchestrates them.
+ * Owns the DOM, input, world streaming, the day/night cycle, game modes
+ * (survival/creative), inventory + hotbar, mining/placing, vitals (health,
+ * air, damage flash) and the multi-world save system.
  */
 (function () {
   "use strict";
 
   const FOV = 70 * Math.PI / 180;
-  const RENDER_DIST = 8;     // chunks streamed around the player
-  const INIT_DIST = 4;       // chunks generated up-front at spawn
-  const REACH = 6;           // block interaction distance
-  const DAY_LENGTH = 600;    // seconds for a full day/night cycle
-  const GEN_PER_FRAME = 2;
-  const MESH_PER_FRAME = 3;
-  const SAVE_KEY = "clockworld_save_v1";
+  const RENDER_DIST = 8, INIT_DIST = 4, REACH = 6, DAY_LENGTH = 600;
+  const GEN_PER_FRAME = 2, MESH_PER_FRAME = 3;
+  const LEGACY_KEY = "clockworld_save_v1";
 
-  const W = window.WorldMod;
-  const ID = window.Blocks.ID;
   const Blocks = window.Blocks;
+  const W = window.WorldMod;
+  const ID = Blocks.ID;
+  const Inventory = window.InventoryMod.Inventory;
+  const Saves = window.SavesMod.Saves;
 
-  // ---- DOM ----
-  const canvas = document.getElementById("game");
-  const overlay = document.getElementById("overlay");
-  const hud = document.getElementById("hud");
-  const hotbarEl = document.getElementById("hotbar");
-  const statusEl = document.getElementById("status");
+  const $ = (id) => document.getElementById(id);
+  const canvas = $("game");
 
-  let renderer, atlas, world, player;
+  // ---- state ----
+  let renderer, atlas, saves, world, player, inv;
+  let worldId = null, meta = null, mode = "survival", creativeHotbar = null;
+  let selectedIndex = 0;
   let time = 0.3, timeFrozen = false;
-  let locked = false;
-  let hotbarBlocks, selectedIndex = 0;
-  const iconCache = {};
+  let running = false, locked = false, invOpen = false, dead = false;
+  let cursor = null, mouseX = 0, mouseY = 0;
+  let mineKey = null, mineProgress = 0, mineTime = 0;
+  let breakTimer = 0, placeTimer = 0, lastW = 0, wSprint = false;
+  const mouseDown = [false, false, false];
+  const keys = {};
+  let last = 0, fps = 0;
+  const iconCache = {}, hearts = {};
+  let bubbleURL = "";
+  let lastHeartHP = -1, lastAirN = -1;
 
-  // chunk offsets within RENDER_DIST, sorted nearest-first
   const OFFSETS = [];
   for (let dx = -RENDER_DIST; dx <= RENDER_DIST; dx++)
     for (let dz = -RENDER_DIST; dz <= RENDER_DIST; dz++)
       if (dx * dx + dz * dz <= RENDER_DIST * RENDER_DIST) OFFSETS.push([dx, dz]);
   OFFSETS.sort((a, b) => (a[0] * a[0] + a[1] * a[1]) - (b[0] * b[0] + b[1] * b[1]));
 
-  // ---------------------------------------------------------------- init
+  // ====================================================== init
   function init() {
     try {
       renderer = new window.Renderer(canvas);
     } catch (e) {
-      overlay.querySelector(".card").innerHTML =
+      document.querySelector("#menu .card").innerHTML =
         "<h1>ClockWorld</h1><p class='tagline'>" + e.message +
-        "</p><p class='tagline'>This game needs a browser with WebGL support.</p>";
+        "</p><p class='tagline'>This game needs a browser with WebGL.</p>";
       return;
     }
     atlas = window.Textures.buildAtlas();
     renderer.setAtlas(atlas);
-
-    const saved = loadSave();
-    const seed = saved ? saved.seed : (Math.random() * 1e9) >>> 0;
-    world = new W.World(seed);
-    if (saved && saved.edits) world.edits = saved.edits;
-
-    hotbarBlocks = saved && saved.hotbar ? saved.hotbar.slice() : Blocks.HOTBAR.slice();
-    selectedIndex = saved && saved.selected ? saved.selected : 0;
-    time = saved && saved.time !== undefined ? saved.time : 0.3;
-
-    let spawn;
-    if (saved && saved.player) {
-      spawn = saved.player.pos.slice();
-    } else {
-      world.getOrCreateChunk(0, 0);
-      let sy = W.HEIGHT - 1;
-      while (sy > 0 && !Blocks.isSolid(world.getBlock(0, sy, 0))) sy--;
-      spawn = [0.5, sy + 1.2, 0.5];
-    }
-    player = new window.Player(spawn);
-    if (saved && saved.player) {
-      player.yaw = saved.player.yaw || 0;
-      player.pitch = saved.player.pitch || 0;
-      player.flying = !!saved.player.flying;
-    }
-
+    saves = new Saves(window.localStorage);
+    buildIcons();
     buildHotbarDOM();
-    renderHotbar();
-    generateInitialArea();
+    migrateLegacy();
+    renderWorldList();
     wireInput();
-
-    setInterval(save, 10000);
-    window.addEventListener("beforeunload", save);
-
+    setInterval(() => { if (running) saveCurrent(); }, 10000);
+    window.addEventListener("beforeunload", () => { if (running) saveCurrent(); });
     last = performance.now();
     requestAnimationFrame(frame);
+  }
+
+  function migrateLegacy() {
+    if (saves.list().length) return;
+    let legacy;
+    try { legacy = JSON.parse(window.localStorage.getItem(LEGACY_KEY) || "null"); } catch (e) { legacy = null; }
+    if (!legacy || legacy.seed === undefined) return;
+    const m = saves.create("My World", legacy.seed, "creative");
+    const data = saves.load(m.id).data;
+    data.edits = legacy.edits || {};
+    data.time = legacy.time || 0.3;
+    if (legacy.player) data.player = {
+      pos: legacy.player.pos, yaw: legacy.player.yaw, pitch: legacy.player.pitch,
+      flying: legacy.player.flying, health: 20, air: 10,
+    };
+    data.creativeHotbar = legacy.hotbar || null;
+    data.selected = legacy.selected || 0;
+    saves.save(m.id, data);
+    try { window.localStorage.removeItem(LEGACY_KEY); } catch (e) { /* ignore */ }
+  }
+
+  // ====================================================== world lifecycle
+  function parseSeed(str) {
+    str = (str || "").trim();
+    if (!str) return (Math.random() * 1e9) >>> 0;
+    if (/^\d+$/.test(str)) return parseInt(str, 10) >>> 0;
+    let h = 2166136261;
+    for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  }
+
+  function computeSpawn() {
+    world.getOrCreateChunk(0, 0);
+    let sy = W.HEIGHT - 1;
+    while (sy > 0 && !Blocks.isSolid(world.getBlock(0, sy, 0))) sy--;
+    return [0.5, sy + 1.2, 0.5];
+  }
+
+  function startWorld(m) {
+    const loaded = saves.load(m.id);
+    if (!loaded) return;
+    const data = loaded.data;
+    worldId = m.id; meta = loaded.meta; mode = data.mode === "creative" ? "creative" : "survival";
+    world = new W.World(data.seed);
+    world.edits = data.edits || {};
+    time = data.time !== undefined ? data.time : 0.3;
+    inv = Inventory.fromJSON(data.inventory || null, 36);
+    creativeHotbar = (data.creativeHotbar && data.creativeHotbar.slice()) || Blocks.HOTBAR.slice();
+    selectedIndex = data.selected || 0;
+
+    const spawn = (data.player && data.player.pos) ? data.player.pos.slice() : computeSpawn();
+    player = new window.Player(spawn, mode);
+    if (data.player) {
+      player.yaw = data.player.yaw || 0;
+      player.pitch = data.player.pitch || 0;
+      if (data.player.health !== undefined) player.health = data.player.health;
+      if (data.player.air !== undefined) player.air = data.player.air;
+      if (mode === "creative") player.flying = data.player.flying !== false;
+    }
+    player.spawn = (data.spawn || spawn).slice();
+
+    generateInitialArea();
+    running = true; dead = false; invOpen = false; cursor = null;
+    lastHeartHP = -1; lastAirN = -1;
+    $("menu").classList.add("hidden");
+    $("vitals").removeAttribute("aria-hidden");
+    renderHotbar();
+    updateVitals();
+    canvas.requestPointerLock();
   }
 
   function generateInitialArea() {
@@ -98,89 +144,110 @@
       if (dx * dx + dz * dz > INIT_DIST * INIT_DIST) continue;
       created.push(world.getOrCreateChunk(pcx + dx, pcz + dz));
     }
-    for (const c of created) {
-      renderer.uploadChunk(c.cx + "," + c.cz, world.buildGeometry(c));
-      c.dirty = false;
-    }
+    for (const c of created) { renderer.uploadChunk(c.cx + "," + c.cz, world.buildGeometry(c)); c.dirty = false; }
   }
 
-  // ---------------------------------------------------------------- streaming
+  function saveCurrent() {
+    if (!worldId || !world || !player) return;
+    saves.save(worldId, {
+      seed: world.seed, mode, edits: world.edits, time,
+      player: {
+        pos: player.pos, yaw: player.yaw, pitch: player.pitch,
+        health: player.health, air: player.air, flying: player.flying,
+      },
+      inventory: inv.toJSON(), creativeHotbar, selected: selectedIndex, spawn: player.spawn,
+    });
+  }
+
+  function quitToMenu() {
+    saveCurrent();
+    running = false;
+    if (document.pointerLockElement) document.exitPointerLock();
+    ["pause", "death", "inventory"].forEach((s) => $(s).classList.add("hidden"));
+    $("vitals").setAttribute("aria-hidden", "true");
+    renderWorldList();
+    $("menu").classList.remove("hidden");
+  }
+
+  function exportCurrent() {
+    if (!worldId) return;
+    saveCurrent();
+    const json = saves.exportWorld(worldId);
+    const blob = new Blob([json], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = (meta.name || "world").replace(/[^\w-]+/g, "_") + ".clockworld.json";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  function switchMode() {
+    mode = mode === "survival" ? "creative" : "survival";
+    player.setMode(mode);
+    meta.mode = mode;
+    if (mode === "creative" && !creativeHotbar) creativeHotbar = Blocks.HOTBAR.slice();
+    renderHotbar(); updateVitals(); saveCurrent();
+    $("pModeBtn").textContent = "Mode: " + mode;
+  }
+
+  // ====================================================== loop
+  function frame(now) {
+    let dt = (now - last) / 1000; last = now;
+    if (dt > 0.05) dt = 0.05;
+    fps += (1 / Math.max(dt, 1e-4) - fps) * 0.1;
+
+    if (running && locked && !invOpen && !dead) {
+      player.update(dt, world, buildCmd());
+      if (!timeFrozen) time = (time + dt / DAY_LENGTH) % 1;
+    }
+
+    if (running) {
+      const eye = player.getEye(), dir = player.getDir();
+      const target = world.raycast(eye, dir, REACH);
+      if (locked && !invOpen && !dead) {
+        handleHold(dt, target);
+        if (player.dead && !dead) onDeath();
+      }
+      manageWorld();
+      renderScene(eye, dir, target);
+      updateHud(target); updateMineBar(); updateVitals(); updateDamageFlash();
+    } else {
+      renderer.clear(skyAndLight().sky);
+    }
+    requestAnimationFrame(frame);
+  }
+
+  function buildCmd() {
+    const shift = !!keys.ShiftLeft || !!keys.ShiftRight;
+    return {
+      f: !!keys.KeyW, b: !!keys.KeyS, l: !!keys.KeyA, r: !!keys.KeyD,
+      jump: !!keys.Space, descend: shift, sneak: shift,
+      sprint: !!keys.ControlLeft || !!keys.ControlRight || wSprint,
+    };
+  }
+
   function manageWorld() {
     const pcx = Math.floor(player.pos[0] / W.SX), pcz = Math.floor(player.pos[2] / W.SZ);
-
-    // unload distant chunks (edits stay in world.edits and are reapplied later)
     const unloadR2 = (RENDER_DIST + 2) * (RENDER_DIST + 2);
     world.chunks.forEach((c, k) => {
       const dx = c.cx - pcx, dz = c.cz - pcz;
-      if (dx * dx + dz * dz > unloadR2) {
-        renderer.removeChunk(k);
-        world.chunks.delete(k);
-      }
+      if (dx * dx + dz * dz > unloadR2) { renderer.removeChunk(k); world.chunks.delete(k); }
     });
-
-    // generate nearest missing chunks (budgeted)
     let gen = GEN_PER_FRAME;
     for (let i = 0; i < OFFSETS.length && gen > 0; i++) {
       const cx = pcx + OFFSETS[i][0], cz = pcz + OFFSETS[i][1];
       if (!world.getChunk(cx, cz)) { world.getOrCreateChunk(cx, cz); gen--; }
     }
-
-    // mesh nearest dirty chunks (budgeted)
     let mesh = MESH_PER_FRAME;
     for (let i = 0; i < OFFSETS.length && mesh > 0; i++) {
       const c = world.getChunk(pcx + OFFSETS[i][0], pcz + OFFSETS[i][1]);
-      if (c && c.dirty) {
-        renderer.uploadChunk(c.cx + "," + c.cz, world.buildGeometry(c));
-        c.dirty = false;
-        mesh--;
-      }
+      if (c && c.dirty) { renderer.uploadChunk(c.cx + "," + c.cz, world.buildGeometry(c)); c.dirty = false; mesh--; }
     }
   }
 
-  // ---------------------------------------------------------------- loop
-  let last = 0, fps = 0;
-  const mouseDown = [false, false, false];
-  let breakTimer = 0, placeTimer = 0;
-  let lastW = 0, wSprint = false;
-  const keys = {};
-
-  function frame(now) {
-    let dt = (now - last) / 1000;
-    last = now;
-    if (dt > 0.05) dt = 0.05;
-    fps = fps + (1 / Math.max(dt, 1e-4) - fps) * 0.1;
-
-    if (locked) {
-      const cmd = {
-        f: !!keys.KeyW, b: !!keys.KeyS, l: !!keys.KeyA, r: !!keys.KeyD,
-        jump: !!keys.Space,
-        descend: !!keys.ShiftLeft || !!keys.ShiftRight,
-        sneak: !!keys.ShiftLeft || !!keys.ShiftRight,
-        sprint: !!keys.ControlLeft || !!keys.ControlRight || wSprint,
-      };
-      player.update(dt, world, cmd);
-
-      breakTimer -= dt; placeTimer -= dt;
-      if (mouseDown[0] && breakTimer <= 0) { doBreak(); breakTimer = 0.18; }
-      if (mouseDown[2] && placeTimer <= 0) { doPlace(); placeTimer = 0.20; }
-
-      if (!timeFrozen) time = (time + dt / DAY_LENGTH) % 1;
-    }
-
-    manageWorld();
-
-    const eye = player.getEye(), dir = player.getDir();
-    const target = world.raycast(eye, dir, REACH);
-    renderScene(eye, dir, target);
-    updateHud(target);
-
-    requestAnimationFrame(frame);
-  }
-
-  // ---------------------------------------------------------------- render
   function skyAndLight() {
-    const sun = Math.sin(time * Math.PI * 2);          // peaks at time=0.25
-    const k = Math.max(0, Math.min(1, (sun + 0.2) / 0.5)); // 0 night .. 1 day
+    const sun = Math.sin(time * Math.PI * 2);
+    const k = Math.max(0, Math.min(1, (sun + 0.2) / 0.5));
     const dayLight = 0.2 + 0.8 * k;
     const night = [0.02, 0.03, 0.08], day = [0.49, 0.71, 0.97];
     const sky = [
@@ -188,7 +255,6 @@
       night[1] + (day[1] - night[1]) * k,
       night[2] + (day[2] - night[2]) * k,
     ];
-    // warm dawn/dusk tint near the horizon
     const horizon = Math.max(0, 1 - Math.abs(sun) / 0.22) * 0.4;
     sky[0] += (0.95 - sky[0]) * horizon;
     sky[1] += (0.5 - sky[1]) * horizon;
@@ -203,124 +269,383 @@
     const { dayLight, sky } = skyAndLight();
     const fogFar = RENDER_DIST * 16 * 0.92;
     renderer.render({
-      proj, view, camPos: eye, dayLight,
-      fogColor: sky, fogNear: fogFar * 0.55, fogFar,
-      highlight: target ? target.hit : null,
+      proj, view, camPos: eye, dayLight, fogColor: sky,
+      fogNear: fogFar * 0.55, fogFar, highlight: target ? target.hit : null,
     });
   }
 
-  // ---------------------------------------------------------------- actions
-  function doBreak() {
-    const r = world.raycast(player.getEye(), player.getDir(), REACH);
-    if (!r) return;
-    const id = world.getBlock(r.hit[0], r.hit[1], r.hit[2]);
-    if (id === ID.BEDROCK || id === ID.AIR) return;
-    world.setBlock(r.hit[0], r.hit[1], r.hit[2], ID.AIR);
+  // ====================================================== mining / placing
+  function currentPlaceable() {
+    if (mode === "creative") return creativeHotbar[selectedIndex] || 0;
+    const s = inv.get(selectedIndex);
+    return s ? s.id : 0;
   }
 
-  function doPlace() {
-    const r = world.raycast(player.getEye(), player.getDir(), REACH);
-    if (!r) return;
-    const [x, y, z] = r.place;
+  function resetMine() { mineKey = null; mineProgress = 0; mineTime = 0; }
+
+  function handleHold(dt, target) {
+    breakTimer -= dt; placeTimer -= dt;
+    if (mouseDown[0]) {
+      if (player.creative) {
+        if (breakTimer <= 0) { breakInstant(target); breakTimer = 0.2; }
+        resetMine();
+      } else { mine(dt, target); }
+    } else resetMine();
+    if (mouseDown[2] && placeTimer <= 0) { place(target); placeTimer = 0.22; }
+  }
+
+  function mine(dt, target) {
+    if (!target) { resetMine(); return; }
+    const id = world.getBlock(target.hit[0], target.hit[1], target.hit[2]);
+    if (!Blocks.isBreakable(id)) { resetMine(); return; }
+    const key = target.hit.join(",");
+    if (key !== mineKey) { mineKey = key; mineProgress = 0; mineTime = Blocks.hardnessOf(id); }
+    mineProgress += dt;
+    if (mineProgress >= mineTime) {
+      world.setBlock(target.hit[0], target.hit[1], target.hit[2], ID.AIR);
+      const drop = Blocks.dropOf(id);
+      if (drop) { inv.add(drop, 1); renderHotbar(); }
+      resetMine();
+    }
+  }
+
+  function breakInstant(target) {
+    if (!target) return;
+    const id = world.getBlock(target.hit[0], target.hit[1], target.hit[2]);
+    if (id === ID.AIR || Blocks.isLiquid(id)) return; // creative may remove bedrock
+    world.setBlock(target.hit[0], target.hit[1], target.hit[2], ID.AIR);
+  }
+
+  function place(target) {
+    if (!target) return;
+    const [x, y, z] = target.place;
     const cur = world.getBlock(x, y, z);
     if (cur !== ID.AIR && !Blocks.isLiquid(cur)) return;
     if (player.intersectsBlock(x, y, z)) return;
-    const block = hotbarBlocks[selectedIndex];
-    if (block && block !== ID.AIR) world.setBlock(x, y, z, block);
+    const sel = currentPlaceable();
+    if (!sel) return;
+    world.setBlock(x, y, z, sel);
+    if (mode === "survival") { inv.removeAt(selectedIndex, 1); renderHotbar(); }
   }
 
-  function pickBlock() {
-    const r = world.raycast(player.getEye(), player.getDir(), REACH);
-    if (!r) return;
-    const id = world.getBlock(r.hit[0], r.hit[1], r.hit[2]);
-    if (id && id !== ID.AIR) { hotbarBlocks[selectedIndex] = id; renderHotbar(); }
+  function pickBlock(target) {
+    if (!target || mode !== "creative") return;
+    const id = world.getBlock(target.hit[0], target.hit[1], target.hit[2]);
+    if (id && id !== ID.AIR) { creativeHotbar[selectedIndex] = id; renderHotbar(); }
   }
 
-  // ---------------------------------------------------------------- hotbar
+  // ====================================================== icons
   function iconFor(id) {
     if (!iconCache[id]) iconCache[id] = window.Textures.iconForBlock(atlas, id, 48);
     return iconCache[id];
   }
+  function buildIcons() {
+    hearts.full = heartURL("#ff3b3b", 1);
+    hearts.half = heartURL("#ff3b3b", 0.5);
+    hearts.empty = heartURL("#3a1414", 1);
+    bubbleURL = bubble();
+  }
+  function heartURL(color, fill) {
+    const c = document.createElement("canvas"); c.width = c.height = 18;
+    const x = c.getContext("2d");
+    const draw = (col) => {
+      x.fillStyle = col; x.beginPath();
+      x.moveTo(9, 16); x.bezierCurveTo(0, 9.5, 2, 2.5, 9, 6.5);
+      x.bezierCurveTo(16, 2.5, 18, 9.5, 9, 16); x.fill();
+    };
+    draw("#3a1414"); // dark backing
+    if (fill < 1) { x.save(); x.beginPath(); x.rect(0, 0, 9, 18); x.clip(); draw(color); x.restore(); }
+    else draw(color);
+    return c.toDataURL();
+  }
+  function bubble() {
+    const c = document.createElement("canvas"); c.width = c.height = 18;
+    const x = c.getContext("2d");
+    x.fillStyle = "rgba(180,220,255,0.95)"; x.beginPath(); x.arc(9, 9, 7, 0, 7); x.fill();
+    x.fillStyle = "rgba(255,255,255,0.9)"; x.beginPath(); x.arc(6.5, 6.5, 2, 0, 7); x.fill();
+    return c.toDataURL();
+  }
+
+  // ====================================================== hotbar + vitals
+  function hotStack(i) {
+    if (mode === "creative") return creativeHotbar[i] ? { id: creativeHotbar[i], count: Infinity } : null;
+    return inv.get(i);
+  }
   function buildHotbarDOM() {
-    hotbarEl.innerHTML = "";
+    const hb = $("hotbar"); hb.innerHTML = "";
     for (let i = 0; i < 9; i++) {
-      const slot = document.createElement("div");
-      slot.className = "slot";
-      const num = document.createElement("span");
-      num.className = "num";
-      num.textContent = i + 1;
-      slot.appendChild(num);
-      hotbarEl.appendChild(slot);
+      const slot = document.createElement("div"); slot.className = "slot";
+      const num = document.createElement("span"); num.className = "num"; num.textContent = i + 1;
+      const cnt = document.createElement("span"); cnt.className = "count";
+      slot.appendChild(num); slot.appendChild(cnt); hb.appendChild(slot);
     }
   }
+  function paintSlot(slot, stack) {
+    const cnt = slot.querySelector(".count");
+    if (stack && stack.id) {
+      slot.style.backgroundImage = "url(" + iconFor(stack.id) + ")";
+      cnt.textContent = (stack.count === Infinity || stack.count <= 1) ? "" : stack.count;
+    } else { slot.style.backgroundImage = "none"; cnt.textContent = ""; }
+  }
   function renderHotbar() {
-    const slots = hotbarEl.children;
+    const slots = $("hotbar").children;
     for (let i = 0; i < 9; i++) {
-      const id = hotbarBlocks[i];
-      slots[i].style.backgroundImage = id ? "url(" + iconFor(id) + ")" : "none";
+      paintSlot(slots[i], hotStack(i));
       slots[i].classList.toggle("selected", i === selectedIndex);
     }
   }
 
-  // ---------------------------------------------------------------- HUD
+  function updateVitals(force) {
+    const heartsEl = $("hearts"), airEl = $("air");
+    if (!player || mode !== "survival") {
+      if (heartsEl.childElementCount) heartsEl.innerHTML = "";
+      if (airEl.childElementCount) airEl.innerHTML = "";
+      lastHeartHP = -1; lastAirN = -1;
+      return;
+    }
+    const hp = Math.max(0, Math.min(player.maxHealth, player.health));
+    if (force || hp !== lastHeartHP) {
+      lastHeartHP = hp;
+      let html = "";
+      for (let i = 0; i < 10; i++) {
+        const v = hp - i * 2;
+        const src = v >= 2 ? hearts.full : v >= 1 ? hearts.half : hearts.empty;
+        html += "<img src='" + src + "'>";
+      }
+      heartsEl.innerHTML = html;
+    }
+    const airN = (player.air < player.maxAir - 0.01) ? Math.ceil(player.air) : 0;
+    if (force || airN !== lastAirN) {
+      lastAirN = airN;
+      let html = "";
+      for (let i = 0; i < airN; i++) html += "<img src='" + bubbleURL + "'>";
+      airEl.innerHTML = html;
+    }
+  }
+
+  function updateMineBar() {
+    const el = $("mine-progress"), bar = $("mine-bar");
+    if (!player.creative && mouseDown[0] && mineKey && mineTime > 0) {
+      el.style.display = "block";
+      bar.style.width = Math.min(100, (mineProgress / mineTime) * 100) + "%";
+    } else el.style.display = "none";
+  }
+
+  function updateDamageFlash() {
+    $("damage-flash").style.opacity = player._hurtFlash > 0
+      ? Math.min(0.8, (player._hurtFlash / 0.35) * 0.8) : 0;
+  }
+
   function facing(dir) {
-    if (Math.abs(dir[0]) > Math.abs(dir[2])) return dir[0] > 0 ? "East (+X)" : "West (-X)";
-    return dir[2] > 0 ? "South (+Z)" : "North (-Z)";
+    if (Math.abs(dir[0]) > Math.abs(dir[2])) return dir[0] > 0 ? "East" : "West";
+    return dir[2] > 0 ? "South" : "North";
   }
   let hudThrottle = 0;
   function updateHud(target) {
-    hudThrottle++;
-    if (hudThrottle % 8 !== 0) return; // ~7-8 updates/sec
-    const p = player.pos, dir = player.getDir();
+    if (++hudThrottle % 8 !== 0) return;
+    const p = player.pos;
     const hour = ((time * 24) + 6) % 24;
-    const lookName = target ? Blocks.BLOCKS[world.getBlock(target.hit[0], target.hit[1], target.hit[2])].name : "—";
-    hud.textContent =
-      "ClockWorld\n" +
-      "FPS     " + fps.toFixed(0) + "\n" +
-      "XYZ     " + p[0].toFixed(1) + " " + p[1].toFixed(1) + " " + p[2].toFixed(1) + "\n" +
-      "Chunks  " + world.chunks.size + "\n" +
-      "Facing  " + facing(dir) + "\n" +
-      "Time    " + hour.toFixed(1) + "h" + (timeFrozen ? " (frozen)" : "") + "\n" +
-      "Mode    " + (player.flying ? "Fly" : "Walk") + (player.inWater ? " · swimming" : player.onGroundPrev ? "" : " · falling") + "\n" +
-      "Holding " + (hotbarBlocks[selectedIndex] ? Blocks.BLOCKS[hotbarBlocks[selectedIndex]].name : "—") + "\n" +
-      "Looking " + lookName;
+    const look = target ? Blocks.BLOCKS[world.getBlock(target.hit[0], target.hit[1], target.hit[2])].name : "—";
+    $("hud").textContent =
+      "ClockWorld · " + meta.name + "\n" +
+      "FPS    " + fps.toFixed(0) + "\n" +
+      "XYZ    " + p[0].toFixed(1) + " " + p[1].toFixed(1) + " " + p[2].toFixed(1) + "\n" +
+      "Mode   " + mode + (player.flying ? " · fly" : "") + (player.inWater ? " · water" : "") + "\n" +
+      (mode === "survival" ? "HP     " + player.health + "/" + player.maxHealth + "\n" : "") +
+      "Time   " + hour.toFixed(1) + "h" + (timeFrozen ? " (frozen)" : "") + "\n" +
+      "Chunks " + world.chunks.size + "\n" +
+      "Look   " + facing(player.getDir()) + " · " + look;
   }
 
-  // ---------------------------------------------------------------- input
+  // ====================================================== inventory UI
+  function openInventory() {
+    if (!running || dead) return;
+    invOpen = true;
+    renderInventory();
+    $("inventory").classList.remove("hidden");
+    if (document.pointerLockElement) document.exitPointerLock();
+  }
+  function closeInventory() {
+    // return any held stack to the inventory so it isn't lost
+    if (cursor && mode === "survival") inv.add(cursor.id, cursor.count);
+    invOpen = false; cursor = null; updateCursor(); renderHotbar();
+    $("inventory").classList.add("hidden");
+    if (running && !dead) canvas.requestPointerLock();
+  }
+
+  function makeInvSlot(stack, onClick) {
+    const d = document.createElement("div");
+    d.className = "slot";
+    const cnt = document.createElement("span"); cnt.className = "count";
+    d.appendChild(cnt); paintSlot(d, stack);
+    d.addEventListener("mousedown", (e) => { e.preventDefault(); onClick(e.button === 2); });
+    d.addEventListener("contextmenu", (e) => e.preventDefault());
+    return d;
+  }
+
+  function renderInventory() {
+    const palette = $("invPalette"), mainG = $("invMain"), hotG = $("invHotbar");
+    $("invTitle").textContent = mode === "creative" ? "Creative Inventory" : "Inventory";
+    palette.innerHTML = ""; mainG.innerHTML = ""; hotG.innerHTML = "";
+
+    if (mode === "creative") {
+      palette.style.display = "flex"; mainG.style.display = "none";
+      $("invHint").innerHTML = "Click a block to assign it to the selected hotbar slot · right-click a slot to clear";
+      Blocks.CREATIVE.forEach((id) => {
+        palette.appendChild(makeInvSlot({ id, count: Infinity }, () => {
+          creativeHotbar[selectedIndex] = id; renderHotbar(); renderInventory();
+        }));
+      });
+      for (let i = 0; i < 9; i++) {
+        const slot = makeInvSlot(hotStack(i), (right) => {
+          if (right) creativeHotbar[i] = 0; else selectedIndex = i;
+          renderHotbar(); renderInventory();
+        });
+        if (i === selectedIndex) slot.classList.add("selected");
+        hotG.appendChild(slot);
+      }
+    } else {
+      palette.style.display = "none"; mainG.style.display = "flex";
+      $("invHint").innerHTML = "Click to pick up / place · right-click for one · <span class='k'>E</span>/<span class='k'>Esc</span> to close";
+      for (let i = 9; i < 36; i++) mainG.appendChild(makeInvSlot(inv.get(i), (r) => invClick(i, r)));
+      for (let i = 0; i < 9; i++) {
+        const slot = makeInvSlot(inv.get(i), (r) => invClick(i, r));
+        if (i === selectedIndex) slot.classList.add("selected");
+        hotG.appendChild(slot);
+      }
+    }
+  }
+
+  function invClick(i, right) {
+    const slot = inv.get(i);
+    const max = slot ? Blocks.maxStackOf(slot.id) : 64;
+    if (!right) {
+      if (!cursor) { if (slot) { cursor = { id: slot.id, count: slot.count }; inv.set(i, null); } }
+      else if (!slot) { inv.set(i, cursor); cursor = null; }
+      else if (slot.id === cursor.id) {
+        const mv = Math.min(max - slot.count, cursor.count);
+        slot.count += mv; cursor.count -= mv; inv.set(i, slot);
+        if (cursor.count <= 0) cursor = null;
+      } else { inv.set(i, cursor); cursor = slot; }
+    } else {
+      if (!cursor) { if (slot) { const half = Math.ceil(slot.count / 2); cursor = { id: slot.id, count: half }; inv.removeAt(i, half); } }
+      else if (!slot) { inv.set(i, { id: cursor.id, count: 1 }); if (--cursor.count <= 0) cursor = null; }
+      else if (slot.id === cursor.id && slot.count < Blocks.maxStackOf(slot.id)) {
+        slot.count++; inv.set(i, slot); if (--cursor.count <= 0) cursor = null;
+      }
+    }
+    renderInventory(); renderHotbar(); updateCursor();
+  }
+
+  function updateCursor() {
+    const el = $("cursorStack");
+    if (cursor && cursor.id) {
+      el.style.display = "block";
+      el.style.backgroundImage = "url(" + iconFor(cursor.id) + ")";
+      el.style.left = mouseX + "px"; el.style.top = mouseY + "px";
+      let c = el.querySelector(".count");
+      if (!c) { c = document.createElement("span"); c.className = "count"; el.appendChild(c); }
+      c.textContent = cursor.count > 1 ? cursor.count : "";
+    } else el.style.display = "none";
+  }
+
+  // ====================================================== death / pause
+  function onDeath() {
+    dead = true;
+    if (document.pointerLockElement) document.exitPointerLock();
+    $("death").classList.remove("hidden");
+  }
+  function respawn() {
+    player.respawn(player.spawn);
+    dead = false; updateVitals(true);
+    $("death").classList.add("hidden");
+    canvas.requestPointerLock();
+  }
+
+  // ====================================================== world list UI
+  function renderWorldList() {
+    const list = saves.list(), el = $("worldList");
+    el.innerHTML = "";
+    if (!list.length) { el.innerHTML = "<p class='muted'>No worlds yet — create one below.</p>"; return; }
+    list.forEach((m) => {
+      const row = document.createElement("div"); row.className = "world-row";
+      const info = document.createElement("div"); info.className = "winfo";
+      const when = new Date(m.updated || m.created).toLocaleString();
+      info.innerHTML = "<div class='wname'>" + escapeHtml(m.name) + "</div>" +
+        "<div class='wmeta'>seed " + m.seed + " · " + when + "</div>";
+      const badge = document.createElement("span");
+      badge.className = "badge " + m.mode; badge.textContent = m.mode;
+      const play = document.createElement("button"); play.className = "iconbtn"; play.textContent = "Play";
+      play.addEventListener("click", () => startWorld(m));
+      const del = document.createElement("button"); del.className = "iconbtn danger"; del.textContent = "✕";
+      del.title = "Delete world";
+      del.addEventListener("click", () => {
+        if (window.confirm("Delete \"" + m.name + "\"? This cannot be undone.")) { saves.remove(m.id); renderWorldList(); }
+      });
+      row.append(info, badge, play, del);
+      el.appendChild(row);
+    });
+  }
+  function escapeHtml(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+  // ====================================================== input
   function wireInput() {
-    const requestLock = () => canvas.requestPointerLock();
-    canvas.addEventListener("click", requestLock);
-    document.getElementById("playBtn").addEventListener("click", requestLock);
-    document.getElementById("saveBtn").addEventListener("click", () => {
-      save(); statusEl.textContent = "Saved.";
+    $("createBtn").addEventListener("click", () => {
+      const m = saves.create($("wName").value || "World", parseSeed($("wSeed").value),
+        document.querySelector("input[name=mode]:checked").value);
+      renderWorldList(); startWorld(m);
     });
-    document.getElementById("newBtn").addEventListener("click", () => {
-      localStorage.removeItem(SAVE_KEY);
-      location.reload();
+    $("importBtn").addEventListener("click", () => $("importFile").click());
+    $("importFile").addEventListener("change", (e) => {
+      const f = e.target.files[0]; if (!f) return;
+      const r = new FileReader();
+      r.onload = () => {
+        const m = saves.importWorld(r.result);
+        $("menuStatus").textContent = m ? ("Imported \"" + m.name + "\".") : "Import failed — not a ClockWorld file.";
+        renderWorldList();
+      };
+      r.readAsText(f); e.target.value = "";
     });
+
+    $("resumeBtn").addEventListener("click", () => canvas.requestPointerLock());
+    $("pSaveBtn").addEventListener("click", () => { saveCurrent(); $("pSaveBtn").textContent = "Saved ✓"; setTimeout(() => ($("pSaveBtn").textContent = "Save"), 1200); });
+    $("pModeBtn").addEventListener("click", switchMode);
+    $("pExportBtn").addEventListener("click", exportCurrent);
+    $("quitBtn").addEventListener("click", quitToMenu);
+    $("respawnBtn").addEventListener("click", respawn);
+    $("dQuitBtn").addEventListener("click", quitToMenu);
+
+    canvas.addEventListener("click", () => { if (running && !invOpen && !dead) canvas.requestPointerLock(); });
+    canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
     document.addEventListener("pointerlockchange", () => {
       locked = document.pointerLockElement === canvas;
-      overlay.classList.toggle("hidden", locked);
-      if (!locked) { mouseDown[0] = mouseDown[2] = false; save(); }
+      if (locked) { $("pause").classList.add("hidden"); }
+      else if (running) {
+        mouseDown[0] = mouseDown[2] = false; resetMine();
+        if (dead) $("death").classList.remove("hidden");
+        else if (invOpen) $("inventory").classList.remove("hidden");
+        else { $("pModeBtn").textContent = "Mode: " + mode; $("pause").classList.remove("hidden"); saveCurrent(); }
+      }
     });
 
     document.addEventListener("mousemove", (e) => {
       if (locked) player.applyMouse(e.movementX || 0, e.movementY || 0);
+      else if (invOpen) { mouseX = e.clientX; mouseY = e.clientY; updateCursor(); }
     });
-
     document.addEventListener("mousedown", (e) => {
       if (!locked) return;
       e.preventDefault();
-      if (e.button === 0) { mouseDown[0] = true; breakTimer = 0; }
-      else if (e.button === 2) { mouseDown[2] = true; placeTimer = 0; }
-      else if (e.button === 1) pickBlock();
+      const eye = player.getEye(), dir = player.getDir();
+      const target = world.raycast(eye, dir, REACH);
+      if (e.button === 0) { mouseDown[0] = true; if (player.creative) { breakInstant(target); breakTimer = 0.2; } else breakTimer = 0; }
+      else if (e.button === 2) { mouseDown[2] = true; place(target); placeTimer = 0.22; }
+      else if (e.button === 1) pickBlock(target);
     });
     document.addEventListener("mouseup", (e) => {
-      if (e.button === 0) mouseDown[0] = false;
+      if (e.button === 0) { mouseDown[0] = false; resetMine(); }
       if (e.button === 2) mouseDown[2] = false;
     });
-    canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
     document.addEventListener("wheel", (e) => {
       if (!locked) return;
@@ -329,52 +654,22 @@
       renderHotbar();
     }, { passive: false });
 
-    const GAME_KEYS = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "Space",
-      "ShiftLeft", "ShiftRight", "ControlLeft", "ControlRight"]);
+    const GAME_KEYS = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "Space", "ShiftLeft", "ShiftRight", "ControlLeft", "ControlRight", "KeyE"]);
     document.addEventListener("keydown", (e) => {
       keys[e.code] = true;
       if (locked && GAME_KEYS.has(e.code)) e.preventDefault();
+      if (!running) return;
+      if (e.code === "KeyE") { if (locked) openInventory(); else if (invOpen) closeInventory(); return; }
+      if (e.code === "Escape") { if (invOpen) closeInventory(); return; }
       if (!locked) return;
-      if (e.code === "KeyW" && !e.repeat) {
-        const t = performance.now();
-        if (t - lastW < 260) wSprint = true;
-        lastW = t;
-      }
-      if (e.code.startsWith("Digit")) {
-        const n = parseInt(e.code.slice(5), 10);
-        if (n >= 1 && n <= 9) { selectedIndex = n - 1; renderHotbar(); }
-      }
+      if (e.code === "KeyW" && !e.repeat) { const t = performance.now(); if (t - lastW < 260) wSprint = true; lastW = t; }
+      if (e.code.startsWith("Digit")) { const n = parseInt(e.code.slice(5), 10); if (n >= 1 && n <= 9) { selectedIndex = n - 1; renderHotbar(); } }
       if (e.code === "KeyF") player.toggleFly();
       if (e.code === "KeyT") timeFrozen = !timeFrozen;
     });
-    document.addEventListener("keyup", (e) => {
-      keys[e.code] = false;
-      if (e.code === "KeyW") wSprint = false;
-    });
+    document.addEventListener("keyup", (e) => { keys[e.code] = false; if (e.code === "KeyW") wSprint = false; });
   }
 
-  // ---------------------------------------------------------------- save/load
-  function save() {
-    if (!world || !player) return;
-    try {
-      localStorage.setItem(SAVE_KEY, JSON.stringify({
-        seed: world.seed,
-        edits: world.edits,
-        time,
-        hotbar: hotbarBlocks,
-        selected: selectedIndex,
-        player: { pos: player.pos, yaw: player.yaw, pitch: player.pitch, flying: player.flying },
-      }));
-    } catch (e) { /* storage full or disabled — ignore */ }
-  }
-  function loadSave() {
-    try { return JSON.parse(localStorage.getItem(SAVE_KEY) || "null"); }
-    catch (e) { return null; }
-  }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
-    init();
-  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
+  else init();
 })();

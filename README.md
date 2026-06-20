@@ -4,10 +4,11 @@ A **Minecraft-style voxel sandbox** that runs in the browser — built from scra
 with **raw WebGL and vanilla JavaScript**. No engine, no frameworks, no build
 step, **zero dependencies**, no external image assets. Every texture is generated
 procedurally at runtime and the whole world is yours to dig, build, and explore.
+Choose **Survival** or **Creative**, and keep as many separate worlds as you like.
 
 > A literal 1:1 copy of Minecraft is a decade of work by a large studio, so this
 > isn't that. It *is* a genuine, playable implementation of the core Minecraft
-> loop — an infinite procedural voxel world you can mine and build in.
+> loop — infinite procedural worlds, two game modes, an inventory, and saves.
 
 ## Play
 
@@ -21,7 +22,18 @@ node serve.js          # then open http://localhost:8080
 npm run serve
 ```
 
-Click **Play** to lock the mouse and start. Press **Esc** to pause.
+From the **world menu**, create a world (pick a name, optional seed, and a mode)
+or load an existing one, then click **Play** to lock the mouse and start.
+
+## Game modes
+
+- **Survival** — health (10 hearts), fall damage, drowning, and the void are all
+  lethal. Blocks take time to mine based on hardness and drop into your
+  **inventory**; placing consumes from your selected stack. No flying.
+- **Creative** — fly freely, instant-break anything (even bedrock), infinite
+  blocks from the creative palette, and no damage.
+
+Switch modes anytime from the pause menu.
 
 ## Controls
 
@@ -32,29 +44,37 @@ Click **Play** to lock the mouse and start. Press **Esc** to pause.
 | **Space** | Jump · swim up · fly up |
 | **Shift** | Sneak · fly down |
 | **Ctrl** / double-tap **W** | Sprint |
-| **Left click** | Break block (hold to keep mining) |
-| **Right click** | Place block (hold to keep placing) |
-| **Middle click** | Pick the block you're looking at |
+| **Left click** | Mine (hold; survival respects hardness) |
+| **Right click** | Place block |
+| **Middle click** | Pick block (creative) |
+| **E** | Open / close inventory |
 | **1–9** / **Mouse wheel** | Select hotbar slot |
-| **F** | Toggle fly / creative mode |
+| **F** | Toggle fly (creative) |
 | **T** | Freeze the day/night cycle |
-| **Esc** | Pause (release mouse) |
+| **Esc** | Pause |
+
+In the inventory, **click** picks up / drops a stack, **right-click** takes or
+places one. In the creative inventory, click a palette block to bind it to your
+selected hotbar slot.
 
 ## Features
 
+- **Two game modes** — Survival (health, hazards, mining, inventory) and Creative
+  (fly, infinite blocks), switchable mid-game.
 - **Infinite procedural terrain** from seeded Perlin/fBm noise — rolling hills,
   beaches, oceans, snow-capped peaks, caves, ore veins, and trees.
-- **Chunk-based world** (16×16×128) streamed in and out as you move.
-- **Efficient meshing**: hidden faces are culled and each chunk is a single mesh,
-  with per-vertex **ambient occlusion** and directional face shading.
-- **Full physics**: gravity, jumping, swept AABB collision, swimming, and a
-  free-fly creative mode.
-- **Build & mine** any of 18 block types via voxel raycasting, with a live
-  wireframe highlight on the targeted block.
+- **Chunk-based world** (16×16×128) streamed in and out as you move, with
+  hidden-face culling, per-vertex **ambient occlusion**, and directional shading.
+- **Mining & building** with per-block hardness, drops, and a 36-slot stacking
+  inventory (9-slot hotbar + creative palette).
+- **Survival mechanics** — hearts, fall damage, drowning with an air meter, a
+  damage flash, death + respawn.
+- **Full physics**: gravity, jumping, swept AABB collision, swimming, free-fly.
 - **Procedural pixel-art textures** drawn to a canvas atlas — grass, dirt, stone,
   wood, leaves, sand, water, glass, bricks, ores, and more.
 - **Day/night cycle** with a moving sun, sky-colour shifts, and distance fog.
-- **Your world is saved** automatically to `localStorage` (seed + every edit).
+- **Multiple named worlds** saved to `localStorage` (seed, mode, every edit,
+  inventory, and player state), with **export/import** to a `.json` file.
 
 ## Project layout
 
@@ -63,12 +83,14 @@ index.html        # markup + UI overlay, loads the scripts in order
 css/style.css     # HUD, hotbar, crosshair, menu styling
 js/math.js        # vec3 / mat4 (perspective, lookAt, multiply)
 js/noise.js       # seeded Perlin noise + fBm + hash
-js/blocks.js      # block registry & atlas tile layout
+js/blocks.js      # block registry: tiles, hardness, drops, stacks
+js/inventory.js   # stack-based inventory model
+js/saves.js       # multi-world registry + export/import
 js/textures.js    # procedural texture-atlas painter
 js/world.js       # chunks, terrain gen, meshing, raycasting
 js/renderer.js    # WebGL program, chunk buffers, draw passes
-js/player.js      # controller: look, movement, physics, collision
-js/main.js        # bootstrap: streaming, input, loop, day/night, save
+js/player.js      # controller: look, movement, physics, health, modes
+js/main.js        # bootstrap: UI, modes, mining, streaming, loop, saves
 serve.js          # tiny static server for local play
 tests/            # Node unit + headless smoke tests
 ```

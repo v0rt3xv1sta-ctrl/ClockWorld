@@ -9,42 +9,99 @@
 <body>
   <canvas id="game"></canvas>
 
+  <div id="damage-flash"></div>
   <div id="crosshair" aria-hidden="true"></div>
-
+  <div id="mine-progress" aria-hidden="true"><div id="mine-bar"></div></div>
   <div id="hud"></div>
 
-  <div id="hotbar" aria-hidden="true"></div>
+  <!-- bottom-center vitals + hotbar (in-game) -->
+  <div id="vitals" aria-hidden="true">
+    <div id="air" class="bubbles"></div>
+    <div id="hearts" class="bubbles"></div>
+    <div id="hotbar"></div>
+  </div>
 
-  <div id="overlay">
-    <div class="card">
+  <!-- ============ World select menu ============ -->
+  <div id="menu" class="screen">
+    <div class="card wide">
       <h1>ClockWorld</h1>
-      <p class="tagline">A tiny Minecraft-style voxel sandbox — built from scratch with WebGL.</p>
+      <p class="tagline">A Minecraft-style voxel sandbox — survival, creative, infinite worlds.</p>
 
-      <div class="controls">
-        <div><span class="k">Mouse</span> Look around</div>
-        <div><span class="k">W A S D</span> Move</div>
-        <div><span class="k">Space</span> Jump / swim up / fly up</div>
-        <div><span class="k">Shift</span> Sneak / fly down</div>
-        <div><span class="k">Ctrl</span> or double-tap <span class="k">W</span> Sprint</div>
-        <div><span class="k">Left click</span> Break block</div>
-        <div><span class="k">Right click</span> Place block</div>
-        <div><span class="k">Middle click</span> Pick block</div>
-        <div><span class="k">1–9 / Scroll</span> Select hotbar slot</div>
-        <div><span class="k">F</span> Toggle fly &nbsp; <span class="k">T</span> Freeze time &nbsp; <span class="k">Esc</span> Pause</div>
-      </div>
+      <h3>Your Worlds</h3>
+      <div id="worldList" class="worldlist"><p class="muted">No worlds yet — create one below.</p></div>
 
-      <button id="playBtn">Play</button>
-      <div class="row">
-        <button id="newBtn" class="secondary">New World</button>
-        <button id="saveBtn" class="secondary">Save</button>
+      <h3>New World</h3>
+      <div class="newworld">
+        <div class="fields">
+          <input id="wName" maxlength="40" placeholder="World name" />
+          <input id="wSeed" maxlength="12" placeholder="Seed (optional)" />
+        </div>
+        <div class="modes">
+          <label class="modeopt"><input type="radio" name="mode" value="survival" checked />
+            <span><b>Survival</b><small>Mine, gather, health &amp; hazards</small></span></label>
+          <label class="modeopt"><input type="radio" name="mode" value="creative" />
+            <span><b>Creative</b><small>Fly, infinite blocks, no damage</small></span></label>
+        </div>
+        <div class="row">
+          <button id="createBtn">Create World</button>
+          <button id="importBtn" class="secondary">Import…</button>
+          <input id="importFile" type="file" accept="application/json,.json" hidden />
+        </div>
+        <p id="menuStatus" class="status"></p>
       </div>
-      <p id="status" class="status"></p>
     </div>
+  </div>
+
+  <!-- ============ Pause ============ -->
+  <div id="pause" class="screen hidden">
+    <div class="card">
+      <h2>Paused</h2>
+      <button id="resumeBtn">Resume</button>
+      <div class="row">
+        <button id="pSaveBtn" class="secondary">Save</button>
+        <button id="pModeBtn" class="secondary">Mode</button>
+      </div>
+      <div class="row">
+        <button id="pExportBtn" class="secondary">Export</button>
+        <button id="quitBtn" class="secondary">Worlds</button>
+      </div>
+      <div class="controls">
+        <div><span class="k">WASD</span> move · <span class="k">Space</span> jump/up · <span class="k">Shift</span> sneak/down</div>
+        <div><span class="k">L-click</span> mine · <span class="k">R-click</span> place · <span class="k">M-click</span> pick</div>
+        <div><span class="k">E</span> inventory · <span class="k">1–9</span>/scroll hotbar · <span class="k">F</span> fly (creative)</div>
+        <div><span class="k">Double-tap W</span> sprint · <span class="k">T</span> freeze time · <span class="k">Esc</span> pause</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Death ============ -->
+  <div id="death" class="screen hidden">
+    <div class="card">
+      <h2 class="died">You Died!</h2>
+      <p class="tagline">The world claimed you. Try again?</p>
+      <button id="respawnBtn">Respawn</button>
+      <button id="dQuitBtn" class="secondary">Back to Worlds</button>
+    </div>
+  </div>
+
+  <!-- ============ Inventory ============ -->
+  <div id="inventory" class="screen hidden">
+    <div class="invpanel">
+      <div id="invTitle">Inventory</div>
+      <div id="invPalette" class="grid palette"></div>
+      <div id="invMain" class="grid"></div>
+      <div class="invlabel">Hotbar</div>
+      <div id="invHotbar" class="grid"></div>
+      <div class="hint" id="invHint">Click to pick up / place · Right-click for one · <span class="k">E</span> / <span class="k">Esc</span> to close</div>
+    </div>
+    <div id="cursorStack"></div>
   </div>
 
   <script src="js/math.js"></script>
   <script src="js/noise.js"></script>
   <script src="js/blocks.js"></script>
+  <script src="js/inventory.js"></script>
+  <script src="js/saves.js"></script>
   <script src="js/textures.js"></script>
   <script src="js/world.js"></script>
   <script src="js/renderer.js"></script>
