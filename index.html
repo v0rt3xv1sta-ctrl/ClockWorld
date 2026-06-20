@@ -52,8 +52,21 @@
         </div>
         <p id="menuStatus" class="status"></p>
       </div>
+
+      <h3>Multiplayer</h3>
+      <div class="newworld">
+        <div class="fields">
+          <input id="mpUrl" placeholder="ws://localhost:8080" />
+          <input id="mpName" maxlength="24" placeholder="Your name" />
+        </div>
+        <button id="connectBtn" class="secondary">Connect to Server</button>
+        <p class="hint" style="margin-top:8px">Host a server with <code>node server/server.js</code>, then connect here.</p>
+      </div>
     </div>
   </div>
+
+  <div id="chat" class="hidden"><div id="chatLog"></div></div>
+  <div id="chatInput" class="hidden"></div>
 
   <!-- ============ Pause ============ -->
   <div id="pause" class="screen hidden">

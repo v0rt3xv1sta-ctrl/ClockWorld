@@ -270,5 +270,39 @@
     gl.drawArrays(gl.LINES, 0, E.length);
   };
 
+  // Draw a flat-coloured solid box (reuses the line program with triangles).
+  Renderer.prototype.drawSolidBox = function (min, max, color, scene) {
+    const gl = this.gl;
+    const c = [
+      [min[0], min[1], min[2]], [max[0], min[1], min[2]], [max[0], min[1], max[2]], [min[0], min[1], max[2]],
+      [min[0], max[1], min[2]], [max[0], max[1], min[2]], [max[0], max[1], max[2]], [min[0], max[1], max[2]],
+    ];
+    const tris = [0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6, 0, 5, 1, 0, 4, 5,
+      3, 2, 6, 3, 6, 7, 0, 3, 7, 0, 7, 4, 1, 5, 6, 1, 6, 2];
+    const verts = new Float32Array(tris.length * 3);
+    for (let i = 0; i < tris.length; i++) {
+      verts[i * 3] = c[tris[i]][0]; verts[i * 3 + 1] = c[tris[i]][1]; verts[i * 3 + 2] = c[tris[i]][2];
+    }
+    gl.useProgram(this.lineProg);
+    gl.uniformMatrix4fv(this.lineLoc.uProj, false, scene.proj);
+    gl.uniformMatrix4fv(this.lineLoc.uView, false, scene.view);
+    gl.uniform4f(this.lineLoc.uColor, color[0], color[1], color[2], 1);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.lineBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, verts, gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(this.lineLoc.aPos);
+    gl.vertexAttribPointer(this.lineLoc.aPos, 3, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.TRIANGLES, 0, tris.length);
+  };
+
+  // Render other players as simple two-tone avatars (body + head).
+  Renderer.prototype.drawAvatars = function (list, scene) {
+    for (const a of list) {
+      const p = a.pos, col = a.color || [0.9, 0.3, 0.3];
+      this.drawSolidBox([p[0] - 0.3, p[1], p[2] - 0.3], [p[0] + 0.3, p[1] + 1.4, p[2] + 0.3], col, scene);
+      const head = [col[0] * 0.7 + 0.2, col[1] * 0.7 + 0.2, col[2] * 0.7 + 0.2];
+      this.drawSolidBox([p[0] - 0.22, p[1] + 1.4, p[2] - 0.22], [p[0] + 0.22, p[1] + 1.84, p[2] + 0.22], head, scene);
+    }
+  };
+
   global.Renderer = Renderer;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -70,6 +70,14 @@ sandbox.addEventListener = () => {}; sandbox.removeEventListener = () => {};
 sandbox.confirm = () => true; sandbox.alert = () => {};
 sandbox.Blob = function () {}; sandbox.URL = { createObjectURL: () => "blob:x", revokeObjectURL() {} };
 sandbox.FileReader = function () { this.readAsText = () => { this.result = "{}"; if (this.onload) this.onload(); }; };
+let lastWS = null;
+sandbox.WebSocket = function (url) {
+  this.url = url; this.readyState = 1; this.sent = [];
+  this.onopen = this.onmessage = this.onclose = this.onerror = null;
+  this.send = (s) => this.sent.push(s);
+  this.close = () => { this.readyState = 3; if (this.onclose) this.onclose(); };
+  lastWS = this;
+};
 sandbox.localStorage = mem();
 let rafCb = null;
 sandbox.requestAnimationFrame = (cb) => { rafCb = cb; return 1; };
@@ -172,5 +180,31 @@ assert(!els.menu.classList.contains("hidden"), "returned to menu");
 const reg = JSON.parse(sandbox.localStorage.getItem("clockworld_worlds") || "{}");
 assert(Object.keys(reg).length >= 1, "world saved to storage");
 
-if (frames < 70) throw new Error("too few frames: " + frames);
-console.log("Smoke test OK — " + frames + " frames: survival, crafting, chest/table/furnace/door, quit.");
+// ---- multiplayer client (stubbed socket) ----
+els.connectBtn.dispatch("click", EV);
+assert(lastWS, "websocket created on connect");
+lastWS.onopen();
+assert(lastWS.sent.some((s) => s.includes("join")), "client sends join on open");
+lastWS.onmessage({ data: JSON.stringify({ t: "welcome", id: 1, seed: 7, mode: "creative", edits: {}, players: [{ id: 2, name: "Bob", pos: [3, 70, 3], yaw: 0, pitch: 0 }] }) });
+assert(sandbox.document.pointerLockElement === els.game, "online world locked pointer");
+assert(!els.chat.classList.contains("hidden"), "chat shown when online");
+run(6); // renders remote avatar + sends movement
+assert(lastWS.sent.some((s) => s.includes("move")), "client streams movement");
+lastWS.onmessage({ data: JSON.stringify({ t: "move", id: 2, pos: [4, 70, 4], yaw: 1, pitch: 0 }) });
+lastWS.onmessage({ data: JSON.stringify({ t: "set", x: 1, y: 65, z: 1, id: 3 }) });
+lastWS.onmessage({ data: JSON.stringify({ t: "chat", id: 2, name: "Bob", text: "hi there" }) });
+lastWS.onmessage({ data: JSON.stringify({ t: "player", id: 5, name: "Cara", pos: [2, 70, 2] }) });
+lastWS.onmessage({ data: JSON.stringify({ t: "leave", id: 5 }) });
+run(4);
+// open chat, type, send
+key("Enter");
+dispatch("keydown", Object.assign({ code: "KeyH", key: "h" }, EV));
+dispatch("keydown", Object.assign({ code: "KeyI", key: "i" }, EV));
+key("Enter");
+assert(lastWS.sent.some((s) => s.includes("chat")), "client sends chat");
+run(2);
+els.quitBtn.dispatch("click", EV);
+assert(!els.menu.classList.contains("hidden"), "multiplayer quit returns to menu");
+
+if (frames < 80) throw new Error("too few frames: " + frames);
+console.log("Smoke test OK — " + frames + " frames: survival, crafting, interactables, multiplayer client, quit.");

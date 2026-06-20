@@ -21,6 +21,7 @@
   const ID = Blocks.ID;
   const Inventory = window.InventoryMod.Inventory;
   const Saves = window.SavesMod.Saves;
+  const Net = window.Net;
 
   const $ = (id) => document.getElementById(id);
   const canvas = $("game");
@@ -47,6 +48,12 @@
   let containerOpen = false, containerKind = null, containerPos = null;
   let chestInv = null, furnaceState = null, craftGrid = [], craftN = 0;
 
+  // multiplayer
+  let online = false, net = null, moveAcc = 0;
+  const remotePlayers = new Map(); // id -> { pos, yaw, pitch, name, color }
+  const chatLog = [];
+  let chatOpen = false, chatBuf = "";
+
   const anyUIOpen = () => invOpen || containerOpen || dead;
 
   const OFFSETS = [];
@@ -72,6 +79,8 @@
     buildHotbarDOM();
     migrateLegacy();
     renderWorldList();
+    const loc = window.location;
+    if (loc && loc.host) $("mpUrl").value = (loc.protocol === "https:" ? "wss://" : "ws://") + loc.host;
     wireInput();
     setInterval(() => { if (running) saveCurrent(); }, 10000);
     window.addEventListener("beforeunload", () => { if (running) saveCurrent(); });
@@ -153,6 +162,70 @@
     canvas.requestPointerLock();
   }
 
+  // ====================================================== multiplayer
+  function avatarColor(id) {
+    const h = (id * 2654435761) >>> 0;
+    return [0.35 + 0.6 * ((h & 255) / 255), 0.35 + 0.6 * (((h >> 8) & 255) / 255), 0.35 + 0.6 * (((h >> 16) & 255) / 255)];
+  }
+  function addRemote(id, p) { remotePlayers.set(id, { pos: p.pos || [0, 80, 0], yaw: p.yaw || 0, pitch: p.pitch || 0, name: p.name || ("Player" + id), color: avatarColor(id) }); }
+  function addChat(line) {
+    chatLog.push(line); if (chatLog.length > 8) chatLog.shift();
+    $("chatLog").innerHTML = chatLog.map(escapeHtml).join("<br>");
+  }
+
+  function connectMP(url, name) {
+    if (!Net || !Net.available) { $("menuStatus").textContent = "WebSocket is not supported here."; return; }
+    $("menuStatus").textContent = "Connecting to " + url + " …";
+    net = new Net.Client();
+    net.connect(url, name || "Player", {
+      welcome: (w) => startOnlineWorld(w),
+      player: (m) => addRemote(m.id, m),
+      move: (m) => { const r = remotePlayers.get(m.id); if (r) { r.pos = m.pos; r.yaw = m.yaw; r.pitch = m.pitch; } else addRemote(m.id, m); },
+      set: (m) => world.setBlock(m.x, m.y, m.z, m.id),
+      leave: (m) => remotePlayers.delete(m.id),
+      chat: (m) => addChat(m.name + ": " + m.text),
+      closed: () => { if (online) { online = false; if (running) quitToMenu(); $("menuStatus").textContent = "Disconnected from server."; } },
+      error: (e) => { $("menuStatus").textContent = "Could not connect: " + (e || ""); },
+    });
+  }
+
+  function startOnlineWorld(w) {
+    online = true; worldId = null;
+    meta = { name: "Multiplayer", mode: w.mode };
+    mode = w.mode === "creative" ? "creative" : "survival";
+    world = new W.World(w.seed);
+    world.edits = Object.assign({}, w.edits || {});
+    time = 0.3;
+    inv = new Inventory(36);
+    creativeHotbar = Blocks.HOTBAR.slice();
+    selectedIndex = 0;
+    chests.clear(); furnaces.clear(); remotePlayers.clear(); chatLog.length = 0;
+    if (w.players) w.players.forEach((p) => addRemote(p.id, p));
+    const spawn = computeSpawn();
+    player = new window.Player(spawn, mode);
+    player.spawn = spawn.slice();
+    generateInitialArea();
+    running = true; dead = false; invOpen = false; containerOpen = false; cursor = null;
+    lastHeartHP = -1; lastAirN = -1; lastHungerH = -1;
+    $("menu").classList.add("hidden");
+    $("chat").classList.remove("hidden");
+    $("chatLog").innerHTML = "";
+    $("vitals").removeAttribute("aria-hidden");
+    renderHotbar(); updateVitals();
+    canvas.requestPointerLock();
+  }
+
+  function openChat() { if (!online) return; chatOpen = true; chatBuf = ""; renderChatInput(); }
+  function closeChat(send) {
+    if (send && chatBuf.trim() && net) net.chat(chatBuf.trim());
+    chatOpen = false; chatBuf = ""; $("chatInput").classList.add("hidden");
+  }
+  function renderChatInput() {
+    const el = $("chatInput");
+    el.classList.toggle("hidden", !chatOpen);
+    el.textContent = "> " + chatBuf;
+  }
+
   function generateInitialArea() {
     const pcx = Math.floor(player.pos[0] / W.SX), pcz = Math.floor(player.pos[2] / W.SZ);
     const created = [];
@@ -179,10 +252,11 @@
   }
 
   function quitToMenu() {
-    saveCurrent();
-    running = false;
+    if (online) { if (net) net.disconnect(); online = false; net = null; remotePlayers.clear(); }
+    else saveCurrent();
+    running = false; chatOpen = false;
     if (document.pointerLockElement) document.exitPointerLock();
-    ["pause", "death", "inventory", "container"].forEach((s) => $(s).classList.add("hidden"));
+    ["pause", "death", "inventory", "container", "chat", "chatInput"].forEach((s) => $(s).classList.add("hidden"));
     invOpen = false; containerOpen = false; cursor = null; updateCursor();
     $("vitals").setAttribute("aria-hidden", "true");
     renderWorldList();
@@ -216,16 +290,17 @@
     if (dt > 0.05) dt = 0.05;
     fps += (1 / Math.max(dt, 1e-4) - fps) * 0.1;
 
-    if (running && locked && !anyUIOpen()) {
+    if (running && locked && !anyUIOpen() && !chatOpen) {
       player.update(dt, world, buildCmd());
       if (!timeFrozen) time = (time + dt / DAY_LENGTH) % 1;
+      if (online && net) { moveAcc += dt; if (moveAcc >= 0.08) { net.move(player.pos, player.yaw, player.pitch); moveAcc = 0; } }
     }
 
     if (running) {
       furnaces.forEach((f) => Furnace.tick(f, dt)); // smelting runs even when closed
       const eye = player.getEye(), dir = player.getDir();
       const target = world.raycast(eye, dir, REACH);
-      if (locked && !anyUIOpen()) {
+      if (locked && !anyUIOpen() && !chatOpen) {
         handleHold(dt, target);
         if (player.dead && !dead) onDeath();
       }
@@ -290,10 +365,12 @@
     const view = window.Mat4.lookAt(eye, window.Vec3.add(eye, dir), [0, 1, 0]);
     const { dayLight, sky } = skyAndLight();
     const fogFar = RENDER_DIST * 16 * 0.92;
-    renderer.render({
+    const scene = {
       proj, view, camPos: eye, dayLight, fogColor: sky,
       fogNear: fogFar * 0.55, fogFar, highlight: target ? target.hit : null,
-    });
+    };
+    renderer.render(scene);
+    if (online && remotePlayers.size) renderer.drawAvatars([...remotePlayers.values()], scene);
   }
 
   // ====================================================== mining / placing
@@ -333,10 +410,16 @@
     if (id === ID.FURNACE || id === ID.FURNACE_LIT) furnaces.delete(k);
   }
 
+  // Apply a block change locally and, when online, push it to the server.
+  function applyEdit(x, y, z, id) {
+    world.setBlock(x, y, z, id);
+    if (online && net) net.set(x, y, z, id);
+  }
+
   function interactBlock(id, hit) {
     const kind = Blocks.interactOf(id);
     if (kind === "door") {
-      world.setBlock(hit[0], hit[1], hit[2], id === ID.DOOR_OPEN ? ID.DOOR : ID.DOOR_OPEN);
+      applyEdit(hit[0], hit[1], hit[2], id === ID.DOOR_OPEN ? ID.DOOR : ID.DOOR_OPEN);
     } else if (kind === "chest") { chestInv = getChest(hit); openContainer("chest", hit); }
     else if (kind === "craft") { craftN = 3; craftGrid = new Array(9).fill(null); openContainer("craft", hit); }
     else if (kind === "furnace") { furnaceState = getFurnace(hit); openContainer("furnace", hit); }
@@ -354,7 +437,7 @@
 
   function breakSurvival(hit, id) {
     removeContainerAt(hit, id);
-    world.setBlock(hit[0], hit[1], hit[2], ID.AIR);
+    applyEdit(hit[0], hit[1], hit[2], ID.AIR);
     const drop = Blocks.dropOf(id);
     if (drop) inv.add(drop, 1);
     if (id === ID.LEAVES && Math.random() < 0.06) inv.add(Items.ITEM.APPLE, 1);   // food from trees
@@ -367,7 +450,7 @@
     const id = world.getBlock(target.hit[0], target.hit[1], target.hit[2]);
     if (id === ID.AIR || Blocks.isLiquid(id)) return; // creative may remove bedrock
     removeContainerAt(target.hit, id);
-    world.setBlock(target.hit[0], target.hit[1], target.hit[2], ID.AIR);
+    applyEdit(target.hit[0], target.hit[1], target.hit[2], ID.AIR);
   }
 
   function place(target) {
@@ -378,7 +461,7 @@
     if (player.intersectsBlock(x, y, z)) return;
     const sel = currentPlaceable();
     if (!sel) return;
-    world.setBlock(x, y, z, sel);
+    applyEdit(x, y, z, sel);
     if (mode === "survival") { inv.removeAt(selectedIndex, 1); renderHotbar(); }
   }
 
@@ -754,6 +837,7 @@
         document.querySelector("input[name=mode]:checked").value);
       renderWorldList(); startWorld(m);
     });
+    $("connectBtn").addEventListener("click", () => connectMP($("mpUrl").value.trim(), $("mpName").value.trim()));
     $("importBtn").addEventListener("click", () => $("importFile").click());
     $("importFile").addEventListener("change", (e) => {
       const f = e.target.files[0]; if (!f) return;
@@ -790,7 +874,7 @@
     });
 
     document.addEventListener("mousemove", (e) => {
-      if (locked) player.applyMouse(e.movementX || 0, e.movementY || 0);
+      if (locked && !chatOpen) player.applyMouse(e.movementX || 0, e.movementY || 0);
       else if (invOpen || containerOpen) { mouseX = e.clientX; mouseY = e.clientY; updateCursor(); }
     });
     document.addEventListener("mousedown", (e) => {
@@ -822,6 +906,15 @@
       keys[e.code] = true;
       if (locked && GAME_KEYS.has(e.code)) e.preventDefault();
       if (!running) return;
+      if (chatOpen) {
+        e.preventDefault();
+        if (e.code === "Enter") closeChat(true);
+        else if (e.code === "Escape") closeChat(false);
+        else if (e.code === "Backspace") { chatBuf = chatBuf.slice(0, -1); renderChatInput(); }
+        else if (e.key && e.key.length === 1 && chatBuf.length < 100) { chatBuf += e.key; renderChatInput(); }
+        return;
+      }
+      if (online && locked && e.code === "Enter" && !anyUIOpen()) { openChat(); e.preventDefault(); return; }
       if (e.code === "KeyE") {
         if (locked) openInventory(); else if (invOpen) closeInventory(); else if (containerOpen) closeContainer();
         return;
