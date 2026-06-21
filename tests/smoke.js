@@ -134,9 +134,11 @@ key("KeyW"); mdown(0); run(25); mup(0); keyUp("KeyW");
 // inventory + 2x2 crafting grid open/click/close
 key("KeyE");
 assert(!els.inventory.classList.contains("hidden"), "inventory opened");
+assert(els.invCraftGrid._children.length === 4, "2x2 craft grid has exactly 4 slots");
 if (els.invCraftGrid._children[0]) els.invCraftGrid._children[0].dispatch("mousedown", { button: 0, preventDefault() {} });
 if (els.invCraftResult._children[0]) els.invCraftResult._children[0].dispatch("mousedown", { button: 0, preventDefault() {} });
 if (els.invMain._children[0]) els.invMain._children[0].dispatch("mousedown", { button: 2, preventDefault() {} });
+assert(els.invCraftGrid._children.length === 4, "craft grid does not duplicate slots on re-render");
 key("KeyE");
 run(2);
 

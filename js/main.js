@@ -750,6 +750,7 @@
   }
   function craftGridDOM(host, n) {
     host.className = "grid craftgrid n" + n;
+    host.innerHTML = ""; // clear first — this element persists across re-renders
     for (let i = 0; i < n * n; i++) host.appendChild(cursorSlot(() => craftGrid[i], (s) => { craftGrid[i] = s; }));
   }
 
