@@ -135,10 +135,15 @@ key("KeyW"); mdown(0); run(25); mup(0); keyUp("KeyW");
 key("KeyE");
 assert(!els.inventory.classList.contains("hidden"), "inventory opened");
 assert(els.invCraftGrid._children.length === 4, "2x2 craft grid has exactly 4 slots");
-if (els.invCraftGrid._children[0]) els.invCraftGrid._children[0].dispatch("mousedown", { button: 0, preventDefault() {} });
-if (els.invCraftResult._children[0]) els.invCraftResult._children[0].dispatch("mousedown", { button: 0, preventDefault() {} });
-if (els.invMain._children[0]) els.invMain._children[0].dispatch("mousedown", { button: 2, preventDefault() {} });
-assert(els.invCraftGrid._children.length === 4, "craft grid does not duplicate slots on re-render");
+// click the craft grid / result / main repeatedly — none of these may grow the DOM
+for (let i = 0; i < 12; i++) {
+  els.invCraftGrid._children[0].dispatch("mousedown", { button: 0, preventDefault() {} });
+  els.invCraftResult._children[0].dispatch("mousedown", { button: 0, preventDefault() {} });
+  els.invMain._children[0].dispatch("mousedown", { button: 2, preventDefault() {} });
+  assert(els.invCraftGrid._children.length === 4, "craft grid stays 4 slots (click " + (i + 1) + ")");
+  assert(els.invCraftResult._children.length === 1, "craft result stays 1 slot (click " + (i + 1) + ")");
+  assert(els.invMain._children.length === 27, "main inventory stays 27 slots (click " + (i + 1) + ")");
+}
 key("KeyE");
 run(2);
 

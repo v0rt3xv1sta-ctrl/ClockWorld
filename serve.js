@@ -28,7 +28,10 @@ http.createServer((req, res) => {
   if (!filePath.startsWith(root)) { res.writeHead(403); res.end("Forbidden"); return; }
   fs.readFile(filePath, (err, data) => {
     if (err) { res.writeHead(404); res.end("Not found"); return; }
-    res.writeHead(200, { "Content-Type": TYPES[path.extname(filePath)] || "application/octet-stream" });
+    res.writeHead(200, {
+      "Content-Type": TYPES[path.extname(filePath)] || "application/octet-stream",
+      "Cache-Control": "no-cache, no-store, must-revalidate", // always serve fresh game code
+    });
     res.end(data);
   });
 }).listen(port, () => {
