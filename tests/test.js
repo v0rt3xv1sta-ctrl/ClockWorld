@@ -410,4 +410,43 @@ function transformPoint(m, p, w = 1) {
   ok("survival starvation");
 })();
 
+// ---- modding SDK ----
+(function () {
+  const M = require("../js/mods.js");
+  const CW = global.ClockWorld;
+  const Items = require("../js/items.js");
+  const Recipes = require("../js/recipes.js");
+
+  const rid = CW.defineBlock({ name: "Ruby Block", color: "#e0115f", hardness: 2 });
+  assert(rid >= 25 && Blocks.BLOCKS[rid] && Blocks.BLOCKS[rid].name === "Ruby Block", "modded block registered");
+  assert(Blocks.CREATIVE.includes(rid), "modded block added to creative palette");
+  assert(Blocks.EXTRA_TILES["mod_block_" + rid], "modded block has a tile spec");
+  ok("SDK defineBlock");
+
+  const gem = CW.defineItem({ name: "Ruby", color: "#e0115f", food: 3 });
+  assert(gem >= 266 && Items.name(gem) === "Ruby", "modded item registered");
+  assert(Items.isFood(gem) && Items.food(gem).hunger === 3, "modded food works");
+  ok("SDK defineItem");
+
+  CW.addRecipe({ shapeless: [gem], result: rid, count: 1 });
+  assert(Recipes.match([gem, 0, 0, 0], 2).id === rid, "modded shapeless recipe matches");
+  CW.addRecipe({ rows: ["RR", "RR"], key: { R: gem }, result: rid });
+  assert(Recipes.match([gem, gem, gem, gem], 2).id === rid, "modded shaped recipe matches");
+  CW.addSmelting(gem, rid);
+  assert(Items.smeltResult(gem) === rid, "modded smelting");
+  ok("SDK addRecipe + addSmelting");
+
+  let fired = null;
+  CW.on("blockBreak", (d) => { fired = d; });
+  M.emit("blockBreak", { x: 1, y: 2, z: 3, id: rid });
+  assert(fired && fired.x === 1 && fired.id === rid, "event hook receives data");
+  ok("SDK events");
+
+  const before = Blocks.BLOCKS.filter(Boolean).length;
+  const okrun = M.run("ClockWorld.defineBlock({ name: 'Coded', color: '#123456' });", "coded");
+  assert(okrun && Blocks.BLOCKS.filter(Boolean).length === before + 1, "mod code string runs and defines a block");
+  assert(M.run("this is not valid js (", "bad") === false, "bad mod code fails gracefully");
+  ok("SDK runs mod code safely");
+})();
+
 console.log("\nAll " + passed + " test groups passed.");

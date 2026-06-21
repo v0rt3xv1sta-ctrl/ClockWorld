@@ -117,6 +117,26 @@
   function isBreakable(id) { const b = BLOCKS[id]; return !!b && b.hardness !== Infinity && id !== AIR; }
   function interactOf(id) { const b = BLOCKS[id]; return b ? b.interact : null; }
 
+  // ---- modding: register new blocks at runtime ----
+  // EXTRA_TILES maps a generated tile name to a draw spec ({color} | {pixels}).
+  // textures.js consults it when building the atlas. Block ids 25..255 are free.
+  const EXTRA_TILES = {};
+  let nextBlockId = 25;
+  function defineBlock(spec) {
+    spec = spec || {};
+    const id = spec.id || nextBlockId++;
+    if (id >= nextBlockId) nextBlockId = id + 1;
+    const tileName = "mod_block_" + id;
+    TILES[tileName] = Object.keys(TILES).length;
+    EXTRA_TILES[tileName] = spec.pixels ? { pixels: spec.pixels } : { color: spec.color || "#b000b0" };
+    BLOCKS[id] = def(id, spec.name || ("Block " + id), {
+      side: TILES[tileName], hardness: spec.hardness, solid: spec.solid,
+      opaque: spec.opaque, drop: spec.drop, interact: spec.interact,
+    });
+    if (spec.creative !== false) CREATIVE.push(id);
+    return id;
+  }
+
   // Default survival starting hotbar (block ids).
   const HOTBAR = [GRASS, DIRT, STONE, COBBLE, LOG, PLANKS, LEAVES, GLASS, SAND];
 
@@ -126,8 +146,8 @@
     CHEST, CRAFTING, FURNACE, DOOR];
 
   const api = {
-    ATLAS_COLS, TILES, ID, BLOCKS, HOTBAR, CREATIVE,
-    isOpaque, isSolid, isLiquid, hardnessOf, dropOf, maxStackOf, isBreakable, interactOf,
+    ATLAS_COLS, TILES, ID, BLOCKS, HOTBAR, CREATIVE, EXTRA_TILES,
+    isOpaque, isSolid, isLiquid, hardnessOf, dropOf, maxStackOf, isBreakable, interactOf, defineBlock,
   };
   global.Blocks = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;

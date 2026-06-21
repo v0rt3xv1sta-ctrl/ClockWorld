@@ -79,6 +79,9 @@ sandbox.WebSocket = function (url) {
   lastWS = this;
 };
 sandbox.localStorage = mem();
+// pre-seed a mod and an active texture pack so startup mod/pack loading is exercised
+sandbox.localStorage.setItem("clockworld_mods", JSON.stringify([{ name: "smoke", code: "ClockWorld.defineBlock({ name: 'SmokeBlock', color: '#00ff00', hardness: 1 }); ClockWorld.on('blockPlace', function () {});", enabled: true }]));
+sandbox.localStorage.setItem("clockworld_activepack", "Candy");
 let rafCb = null;
 sandbox.requestAnimationFrame = (cb) => { rafCb = cb; return 1; };
 sandbox.document = {
@@ -93,7 +96,7 @@ sandbox.document = {
 const EV = { preventDefault() {}, stopPropagation() {} };
 
 const ctx = vm.createContext(sandbox);
-["math", "noise", "blocks", "items", "recipes", "furnace", "inventory", "saves", "textures", "world", "renderer", "player", "net", "main"]
+["math", "noise", "blocks", "items", "recipes", "furnace", "mods", "inventory", "saves", "textures", "world", "renderer", "player", "net", "main"]
   .forEach((f) => vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "js", f + ".js"), "utf8"), ctx, { filename: f + ".js" }));
 
 const B = sandbox.Blocks;
@@ -105,8 +108,21 @@ function mdown(button) { dispatch("mousedown", Object.assign({ button }, EV)); }
 function mup(button) { dispatch("mouseup", Object.assign({ button }, EV)); }
 function assert(c, m) { if (!c) throw new Error("assert: " + m); }
 
-// menu -> create a survival world
+// startup mod ran and registered a block; texture pack was applied
+assert(B.BLOCKS.some((b) => b && b.name === "SmokeBlock"), "startup mod defined a block");
+
+// menu -> Mods & texture packs screen
 run(2);
+els.modsBtn.dispatch("click", EV);
+assert(!els.mods.classList.contains("hidden"), "mods screen opens");
+assert(els.packList._children.length >= 1 && els.modList._children.length >= 1, "packs and mods listed");
+sandbox.document.getElementById("modCode").value = "ClockWorld.log('hi');";
+sandbox.document.getElementById("modName").value = "added";
+els.modAdd.dispatch("click", EV);
+els.modsBack.dispatch("click", EV);
+assert(!els.menu.classList.contains("hidden"), "returned to menu from mods");
+
+// menu -> create a survival world
 els.createBtn.dispatch("click", EV);
 assert(sandbox.document.pointerLockElement === els.game, "world locked pointer");
 run(3);

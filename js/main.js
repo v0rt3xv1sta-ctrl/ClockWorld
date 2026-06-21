@@ -22,6 +22,8 @@
   const Inventory = window.InventoryMod.Inventory;
   const Saves = window.SavesMod.Saves;
   const Net = window.Net;
+  const Mods = window.Mods;
+  const emitMod = (ev, data) => { if (Mods) Mods.emit(ev, data); };
 
   const $ = (id) => document.getElementById(id);
   const canvas = $("game");
@@ -72,6 +74,7 @@
         "</p><p class='tagline'>This game needs a browser with WebGL.</p>";
       return;
     }
+    loadModsAndPacks(); // register modded blocks/items + texture pack before the atlas is built
     atlas = window.Textures.buildAtlas();
     renderer.setAtlas(atlas);
     saves = new Saves(window.localStorage);
@@ -160,6 +163,7 @@
     $("vitals").removeAttribute("aria-hidden");
     renderHotbar();
     updateVitals();
+    emitMod("worldStart", { mode, seed: world.seed, online: false });
     canvas.requestPointerLock();
   }
 
@@ -231,6 +235,7 @@
     $("chatLog").innerHTML = "";
     $("vitals").removeAttribute("aria-hidden");
     renderHotbar(); updateVitals();
+    emitMod("worldStart", { mode, seed: w.seed, online: true });
     canvas.requestPointerLock();
   }
 
@@ -311,6 +316,7 @@
 
     if (running && locked && !anyUIOpen() && !chatOpen) {
       player.update(dt, world, buildCmd());
+      emitMod("tick", { dt });
       if (!timeFrozen) time = (time + dt / DAY_LENGTH) % 1;
       if (online && net) { moveAcc += dt; if (moveAcc >= 0.08) { net.move(player.pos, player.yaw, player.pitch); moveAcc = 0; } }
     }
@@ -416,7 +422,7 @@
       const food = heldFood();
       if (food && mode === "survival" && player.hunger < player.maxHunger) {
         eatTimer += dt;
-        if (eatTimer >= 1.2) { player.eat(food); inv.removeAt(selectedIndex, 1); renderHotbar(); eatTimer = 0; }
+        if (eatTimer >= 1.2) { const fid = heldSelectedId(); player.eat(food); inv.removeAt(selectedIndex, 1); renderHotbar(); emitMod("eat", { id: fid }); eatTimer = 0; }
       } else if (placeTimer <= 0) { place(target); placeTimer = 0.22; }
     } else eatTimer = 0;
   }
@@ -457,6 +463,7 @@
   function breakSurvival(hit, id) {
     removeContainerAt(hit, id);
     applyEdit(hit[0], hit[1], hit[2], ID.AIR);
+    emitMod("blockBreak", { x: hit[0], y: hit[1], z: hit[2], id });
     const drop = Blocks.dropOf(id);
     if (drop) inv.add(drop, 1);
     if (id === ID.LEAVES && Math.random() < 0.06) inv.add(Items.ITEM.APPLE, 1);   // food from trees
@@ -470,6 +477,7 @@
     if (id === ID.AIR || Blocks.isLiquid(id)) return; // creative may remove bedrock
     removeContainerAt(target.hit, id);
     applyEdit(target.hit[0], target.hit[1], target.hit[2], ID.AIR);
+    emitMod("blockBreak", { x: target.hit[0], y: target.hit[1], z: target.hit[2], id });
   }
 
   function place(target) {
@@ -481,6 +489,7 @@
     const sel = currentPlaceable();
     if (!sel) return;
     applyEdit(x, y, z, sel);
+    emitMod("blockPlace", { x, y, z, id: sel });
     if (mode === "survival") { inv.removeAt(selectedIndex, 1); renderHotbar(); }
   }
 
@@ -849,6 +858,58 @@
   }
   function escapeHtml(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 
+  // ====================================================== mods & texture packs
+  const MODS_KEY = "clockworld_mods", PACKS_KEY = "clockworld_packs", ACTIVEPACK_KEY = "clockworld_activepack";
+  const BUILTIN_PACKS = {
+    Grayscale: { grass_top: "#9a9a9a", grass_side: "#8a8a8a", dirt: "#777", stone: "#9b9b9b", cobblestone: "#888", sand: "#cfcfcf", water: "#6f8aa0", leaves: "#888", log_side: "#6b6b6b", log_top: "#7a7a7a", planks: "#a0a0a0" },
+    Candy: { grass_top: "#7ee0a0", grass_side: "#e89ad0", dirt: "#c98ad0", stone: "#f2c6e0", sand: "#fff0b0", water: "#7ad0ff", leaves: "#a0f0c0", planks: "#ffb0d0", log_side: "#d080b0" },
+  };
+  function getMods() { try { return JSON.parse(localStorage.getItem(MODS_KEY) || "[]"); } catch (e) { return []; } }
+  function setMods(a) { try { localStorage.setItem(MODS_KEY, JSON.stringify(a)); } catch (e) { /* ignore */ } }
+  function getPacks() { try { return JSON.parse(localStorage.getItem(PACKS_KEY) || "[]"); } catch (e) { return []; } }
+  function setPacks(a) { try { localStorage.setItem(PACKS_KEY, JSON.stringify(a)); } catch (e) { /* ignore */ } }
+  function getActivePack() { try { return localStorage.getItem(ACTIVEPACK_KEY) || ""; } catch (e) { return ""; } }
+  function setActivePack(n) { try { if (n) localStorage.setItem(ACTIVEPACK_KEY, n); else localStorage.removeItem(ACTIVEPACK_KEY); } catch (e) { /* ignore */ } }
+  function allPacks() { const m = Object.assign({}, BUILTIN_PACKS); getPacks().forEach((p) => { m[p.name] = p.map; }); return m; }
+
+  function loadModsAndPacks() {
+    const active = getActivePack();
+    if (active) { const packs = allPacks(); if (packs[active]) window.Textures.setPack(packs[active]); }
+    getMods().forEach((mo) => { if (mo.enabled) window.Mods.run(mo.code, mo.name); });
+  }
+
+  function mkModRow(label, on, onToggle, onDelete) {
+    const row = document.createElement("div"); row.className = "world-row" + (on ? " on" : "");
+    const info = document.createElement("div"); info.className = "winfo";
+    info.innerHTML = "<div class='wname'>" + escapeHtml(label) + "</div>";
+    const use = document.createElement("button"); use.className = "iconbtn"; use.textContent = on ? "✓ on" : "Use";
+    use.addEventListener("click", onToggle);
+    row.append(info, use);
+    if (onDelete) { const del = document.createElement("button"); del.className = "iconbtn danger"; del.textContent = "✕"; del.addEventListener("click", onDelete); row.append(del); }
+    return row;
+  }
+  function renderMods() {
+    const active = getActivePack(), packs = allPacks();
+    const pl = $("packList"); pl.innerHTML = "";
+    pl.appendChild(mkModRow("None (procedural default)", active === "", () => { setActivePack(""); renderMods(); }, null));
+    Object.keys(packs).forEach((name) => {
+      const builtin = name in BUILTIN_PACKS;
+      pl.appendChild(mkModRow(name + (builtin ? " · built-in" : ""), active === name,
+        () => { setActivePack(name); renderMods(); },
+        builtin ? null : () => { setPacks(getPacks().filter((p) => p.name !== name)); if (active === name) setActivePack(""); renderMods(); }));
+    });
+    const ml = $("modList"); ml.innerHTML = "";
+    const mods = getMods();
+    if (!mods.length) ml.innerHTML = "<p class='muted'>No mods installed.</p>";
+    mods.forEach((mo, i) => {
+      ml.appendChild(mkModRow(mo.name + (mo.enabled ? "" : " · disabled"), mo.enabled,
+        () => { mods[i].enabled = !mods[i].enabled; setMods(mods); renderMods(); },
+        () => { mods.splice(i, 1); setMods(mods); renderMods(); }));
+    });
+  }
+  function openMods() { renderMods(); $("menu").classList.add("hidden"); $("mods").classList.remove("hidden"); }
+  function closeMods() { $("mods").classList.add("hidden"); $("menu").classList.remove("hidden"); }
+
   // ====================================================== input
   function wireInput() {
     $("createBtn").addEventListener("click", () => {
@@ -858,6 +919,38 @@
     });
     $("joinHereBtn").addEventListener("click", () => connectMP(sameOriginWS(), $("mpName").value.trim()));
     $("connectBtn").addEventListener("click", () => connectMP($("mpUrl").value.trim(), $("mpName").value.trim()));
+
+    $("modsBtn").addEventListener("click", openMods);
+    $("modsBack").addEventListener("click", closeMods);
+    $("modsApply").addEventListener("click", () => window.location.reload());
+    $("modAdd").addEventListener("click", () => {
+      const code = $("modCode").value; if (!code.trim()) return;
+      const mods = getMods();
+      mods.push({ name: $("modName").value.trim() || ("Mod " + (mods.length + 1)), code, enabled: true });
+      setMods(mods); $("modName").value = ""; $("modCode").value = ""; renderMods();
+    });
+    $("modImport").addEventListener("click", () => $("modFile").click());
+    $("modFile").addEventListener("change", (e) => {
+      const f = e.target.files[0]; if (!f) return;
+      const r = new FileReader();
+      r.onload = () => { const mods = getMods(); mods.push({ name: f.name.replace(/\.js$/, ""), code: String(r.result), enabled: true }); setMods(mods); renderMods(); };
+      r.readAsText(f); e.target.value = "";
+    });
+    $("packImport").addEventListener("click", () => $("packFile").click());
+    $("packFile").addEventListener("change", (e) => {
+      const f = e.target.files[0]; if (!f) return;
+      const r = new FileReader();
+      r.onload = () => {
+        try {
+          const j = JSON.parse(r.result);
+          const name = j.name || f.name.replace(/\.json$/, "");
+          const map = j.tiles || j.map || j;
+          const packs = getPacks().filter((p) => p.name !== name);
+          packs.push({ name, map }); setPacks(packs); setActivePack(name); renderMods();
+        } catch (err) { /* ignore bad pack */ }
+      };
+      r.readAsText(f); e.target.value = "";
+    });
     $("importBtn").addEventListener("click", () => $("importFile").click());
     $("importFile").addEventListener("change", (e) => {
       const f = e.target.files[0]; if (!f) return;

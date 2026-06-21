@@ -50,6 +50,19 @@
   SMELT[Blocks.ID.LOG] = ITEM.CHARCOAL;
   function smeltResult(id) { return SMELT[id] || 0; }
 
+  // ---- modding: register new items at runtime (ids 266+) ----
+  const MOD_ICONS = {};
+  let nextItemId = 266;
+  function defineItem(spec) {
+    spec = spec || {};
+    const id = spec.id || nextItemId++;
+    if (id >= nextItemId) nextItemId = id + 1;
+    META[id] = { name: spec.name || ("Item " + id), maxStack: spec.stack || 64, food: spec.food, sat: spec.sat, heal: spec.heal, fuel: spec.fuel };
+    MOD_ICONS[id] = spec.pixels ? { pixels: spec.pixels } : { color: spec.color || "#cccccc" };
+    if (spec.smeltFrom) SMELT[spec.smeltFrom] = id;
+    return id;
+  }
+
   // ---- icons (browser only) ----
   const iconCache = {};
   function iconURL(id, atlas) {
@@ -62,6 +75,12 @@
     const c = document.createElement("canvas"); c.width = c.height = 16;
     const x = c.getContext("2d");
     const rect = (px, py, w, h, col) => { x.fillStyle = col; x.fillRect(px, py, w, h); };
+    const mi = MOD_ICONS[id];
+    if (mi) {
+      if (mi.pixels) { for (let i = 0; i < 256; i++) { if (mi.pixels[i]) rect(i % 16, (i / 16) | 0, 1, 1, mi.pixels[i]); } }
+      else rect(3, 3, 10, 10, mi.color);
+      return c.toDataURL();
+    }
     switch (id) {
       case ITEM.STICK:
         for (let i = 0; i < 7; i++) rect(10 - i, 3 + i, 2, 2, "#7a5326"); break;
@@ -89,7 +108,7 @@
     return c.toDataURL();
   }
 
-  const api = { ITEM, META, isBlock, exists, name, maxStack, isPlaceable, isFood, food, fuelTime, smeltResult, iconURL, SMELT };
+  const api = { ITEM, META, isBlock, exists, name, maxStack, isPlaceable, isFood, food, fuelTime, smeltResult, iconURL, SMELT, defineItem, MOD_ICONS };
   global.Items = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

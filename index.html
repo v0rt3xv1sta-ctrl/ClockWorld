@@ -63,6 +63,34 @@
         </div>
         <p id="mpHint" class="hint" style="margin-top:8px">Host: run <code>node server/server.js</code> and share the address it prints. Players open that address and click <b>Join This Server</b>.</p>
       </div>
+
+      <h3>Extend</h3>
+      <button id="modsBtn" class="secondary">Mods &amp; Texture Packs</button>
+    </div>
+  </div>
+
+  <!-- ============ Mods & texture packs ============ -->
+  <div id="mods" class="screen hidden">
+    <div class="card wide">
+      <h2>Mods &amp; Texture Packs</h2>
+      <h3>Texture Packs</h3>
+      <div id="packList" class="worldlist"></div>
+      <button id="packImport" class="secondary">Import Pack (.json)</button>
+      <input id="packFile" type="file" accept=".json,application/json" hidden />
+      <h3>Mods</h3>
+      <div id="modList" class="worldlist"></div>
+      <input id="modName" maxlength="40" placeholder="Mod name" />
+      <textarea id="modCode" rows="5" spellcheck="false" placeholder="ClockWorld.defineBlock({ name: 'Ruby Block', color: '#e0115f', hardness: 3 });"></textarea>
+      <div class="row">
+        <button id="modAdd">Add Mod</button>
+        <button id="modImport" class="secondary">Import .js</button>
+        <input id="modFile" type="file" accept=".js,text/javascript,text/plain" hidden />
+      </div>
+      <p class="hint">Mods run with the <code>ClockWorld</code> API (see <code>MODDING.md</code>). Changes apply on reload.</p>
+      <div class="row">
+        <button id="modsApply">Apply &amp; Reload</button>
+        <button id="modsBack" class="secondary">Back</button>
+      </div>
     </div>
   </div>
 
@@ -138,6 +166,7 @@
   <script src="js/items.js"></script>
   <script src="js/recipes.js"></script>
   <script src="js/furnace.js"></script>
+  <script src="js/mods.js"></script>
   <script src="js/inventory.js"></script>
   <script src="js/saves.js"></script>
   <script src="js/textures.js"></script>

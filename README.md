@@ -79,6 +79,9 @@ selected hotbar slot.
   damage flash, death + respawn.
 - **Multiplayer** — host a shared world with the built-in server and build,
   explore, and chat together; other players appear as avatars.
+- **Modding SDK & texture packs** — add blocks, items, recipes, smelting, and
+  event hooks from in-game JavaScript via a `ClockWorld` API, and reskin tiles
+  with JSON texture packs. See **[MODDING.md](MODDING.md)**.
 - **Full physics**: gravity, jumping, swept AABB collision, swimming with
   auto-step so you can climb out of water, and free-fly.
 - **Procedural pixel-art textures** drawn to a canvas atlas, **day/night cycle**,
@@ -113,6 +116,7 @@ js/blocks.js      # block registry: tiles, hardness, drops, stacks, interact
 js/items.js       # items (blocks + materials/food), fuel, smelting, icons
 js/recipes.js     # crafting recipe matcher (shaped + shapeless)
 js/furnace.js     # furnace smelting state machine
+js/mods.js        # modding SDK (ClockWorld API + event hooks)
 js/inventory.js   # stack-based inventory model
 js/saves.js       # multi-world registry + export/import
 js/textures.js    # procedural texture-atlas painter

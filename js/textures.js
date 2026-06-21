@@ -164,6 +164,20 @@
     }
   }
 
+  let pack = null; // texture pack: tileName -> "#rgb" | {color} | {pixels:[256]}
+  function setPack(map) { pack = map || null; }
+
+  function hexRGB(h) {
+    h = (h || "#000").replace("#", "");
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  }
+  function drawSpec(p, spec) {
+    if (typeof spec === "string") spec = { color: spec };
+    if (spec.pixels) { for (let i = 0; i < 256 && i < spec.pixels.length; i++) { if (spec.pixels[i]) { const c = hexRGB(spec.pixels[i]); p.px(i % 16, (i / 16) | 0, c[0], c[1], c[2]); } } }
+    else { const c = hexRGB(spec.color); p.noisy(c, 12); }
+  }
+
   function buildAtlas() {
     const canvas = document.createElement("canvas");
     canvas.width = COLS * TILE;
@@ -171,11 +185,14 @@
     const ctx = canvas.getContext("2d");
     ctx.imageSmoothingEnabled = false;
     let seedCounter = 1;
+    const extra = Blocks.EXTRA_TILES || {};
     for (const name in Blocks.TILES) {
       const tile = Blocks.TILES[name];
       const col = tile % COLS, row = (tile / COLS) | 0;
       const p = new Painter(ctx, col * TILE, row * TILE, mulberry32(0x9e37 + tile * 2654435761 + seedCounter++));
-      (GEN[name] || ((pp) => pp.noisy([200, 0, 200], 0)))(p);
+      const override = (pack && pack[name]) || extra[name]; // texture pack wins, then modded tiles
+      if (override) drawSpec(p, override);
+      else (GEN[name] || ((pp) => pp.noisy([200, 0, 200], 0)))(p);
     }
     return canvas;
   }
@@ -196,5 +213,5 @@
     return tileDataURL(atlas, b.top !== undefined ? b.top : b.side, size);
   }
 
-  global.Textures = { buildAtlas, tileDataURL, iconForBlock, TILE };
+  global.Textures = { buildAtlas, tileDataURL, iconForBlock, setPack, TILE };
 })(typeof window !== "undefined" ? window : globalThis);

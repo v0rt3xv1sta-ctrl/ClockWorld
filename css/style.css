@@ -151,6 +151,13 @@ input[type="text"], #wName, #wSeed {
   border-radius: 8px; padding: 9px 11px;
 }
 #wSeed { max-width: 130px; }
+textarea {
+  width: 100%; font: 12px/1.45 "Consolas", monospace; color: #dbe6f5;
+  background: rgba(0, 0, 0, 0.35); border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px; padding: 9px; margin: 8px 0; resize: vertical;
+}
+#modName { width: 100%; margin-top: 6px; }
+.world-row.on { border-color: rgba(126, 231, 135, 0.5); }
 .modes { display: flex; gap: 8px; margin-bottom: 12px; }
 .modeopt {
   flex: 1; display: flex; align-items: center; gap: 8px;

@@ -66,7 +66,7 @@
     return null;
   }
 
-  const api = { match, SHAPED, SHAPELESS };
+  const api = { match, SHAPED, SHAPELESS, addShaped: shaped, addShapeless: shapeless };
   global.Recipes = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);
