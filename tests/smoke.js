@@ -197,11 +197,15 @@ const reg = JSON.parse(sandbox.localStorage.getItem("clockworld_worlds") || "{}"
 assert(Object.keys(reg).length >= 1, "world saved to storage");
 
 // ---- multiplayer client (stubbed socket) ----
+sandbox.document.getElementById("acctUser").value = "Tester";
+sandbox.document.getElementById("acctPass").value = "pw12";
 els.connectBtn.dispatch("click", EV);
 assert(lastWS, "websocket created on connect");
 lastWS.onopen();
 assert(lastWS.sent.some((s) => s.includes("join")), "client sends join on open");
 lastWS.onmessage({ data: JSON.stringify({ t: "welcome", id: 1, seed: 7, mode: "creative", edits: {}, players: [{ id: 2, name: "Bob", pos: [3, 70, 3], yaw: 0, pitch: 0 }] }) });
+assert(lastWS.sent.some((s) => s.includes("login")), "client sends account login after welcome");
+lastWS.onmessage({ data: JSON.stringify({ t: "authok", name: "Tester", token: "tok123" }) });
 assert(sandbox.document.pointerLockElement === els.game, "online world locked pointer");
 assert(!els.chat.classList.contains("hidden"), "chat shown when online");
 run(6); // renders remote avatar + sends movement

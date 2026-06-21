@@ -78,7 +78,9 @@ selected hotbar slot.
 - **Survival mechanics** — hearts, fall damage, drowning with an air meter, a
   damage flash, death + respawn.
 - **Multiplayer** — host a shared world with the built-in server and build,
-  explore, and chat together; other players appear as avatars.
+  explore, and chat together; other players appear as avatars. Optional
+  **accounts** (register/login) with salted-hashed passwords and signed session
+  tokens, or play as a guest.
 - **Modding SDK & texture packs** — add blocks, items, recipes, smelting, and
   event hooks from in-game JavaScript via a `ClockWorld` API, and reskin tiles
   with JSON texture packs. See **[MODDING.md](MODDING.md)**.
@@ -127,7 +129,8 @@ js/net.js         # multiplayer client (WebSocket)
 js/main.js        # bootstrap: UI, modes, crafting, containers, loop, net
 serve.js          # tiny static server for local play
 server/ws.js      # from-scratch WebSocket (RFC 6455) server
-server/server.js  # multiplayer host: static files + shared world
+server/accounts.js# user accounts: PBKDF2 hashing + signed tokens
+server/server.js  # multiplayer host: static files + shared world + accounts
 tests/            # Node unit, headless smoke, and live server tests
 ```
 

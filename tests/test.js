@@ -449,4 +449,24 @@ function transformPoint(m, p, w = 1) {
   ok("SDK runs mod code safely");
 })();
 
+// ---- accounts ----
+(function () {
+  const { Accounts } = require("../server/accounts.js");
+  const a = new Accounts(null, "unit-secret"); // in-memory (no file)
+  const r = a.register("Alice", "secret");
+  assert(r.ok && r.name === "Alice" && r.token, "register returns token");
+  assert(!a.register("alice", "x").ok, "duplicate username (case-insensitive) rejected");
+  assert(!a.register("ab", "secret").ok, "too-short username rejected");
+  assert(!a.register("Bob", "12").ok, "too-short password rejected");
+  assert(a.login("Alice", "secret").ok, "correct login succeeds");
+  assert(!a.login("Alice", "wrong").ok, "wrong password rejected");
+  assert(!a.login("ghost", "x").ok, "unknown user rejected");
+  assert(a.verifyToken(r.token) === "Alice", "valid token resolves to user");
+  const forged = new Accounts(null, "different-secret");
+  forged.register("Alice", "secret");
+  assert(a.verifyToken(forged.login("Alice", "secret").token) === null, "token signed with another secret rejected");
+  assert(a.verifyToken("garbage") === null, "garbage token rejected");
+  ok("accounts: register / login / hashed verify / tokens");
+})();
+
 console.log("\nAll " + passed + " test groups passed.");

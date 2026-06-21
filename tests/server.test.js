@@ -11,7 +11,10 @@ process.env.PORT = String(PORT);
 process.env.CW_SAVE = "/tmp/cw_test_world.json";
 process.env.CW_SEED = "12345";
 process.env.CW_MODE = "creative";
+process.env.CW_ACCOUNTS = "/tmp/cw_test_accounts.json";
+process.env.CW_SECRET = "test-secret";
 try { fs.unlinkSync(process.env.CW_SAVE); } catch (e) { /* ignore */ }
+try { fs.unlinkSync(process.env.CW_ACCOUNTS); } catch (e) { /* ignore */ }
 
 const { httpServer } = require("../server/server.js");
 
@@ -69,6 +72,18 @@ function assert(c, m) { if (!c) throw new Error("assert: " + m); }
   const cb = await b.wait("chat");
   assert(cb.text === "hello world" && cb.name === "Alice", "chat broadcast");
   console.log("  ok - chat broadcast");
+
+  // accounts: register, login, wrong password, token
+  a.j({ t: "register", user: "Zoe", pass: "hunter2" });
+  const reg = await a.wait("authok");
+  assert(reg.name === "Zoe" && reg.token, "register over WS returns authok + token");
+  b.j({ t: "login", user: "Zoe", pass: "hunter2" });
+  assert((await b.wait("authok")).name === "Zoe", "login over WS succeeds");
+  b.j({ t: "login", user: "Zoe", pass: "nope" });
+  assert((await b.wait("authfail")).msg, "wrong password returns authfail");
+  a.j({ t: "token", token: reg.token });
+  assert((await a.wait("authok")).name === "Zoe", "token re-auth works");
+  console.log("  ok - accounts register/login/token over WS");
 
   b.close();
   const la = await a.wait("leave");

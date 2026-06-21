@@ -195,13 +195,26 @@
     return url;
   }
 
+  let pendingAuth = null;
+  function sendAuth() {
+    if (!net || !pendingAuth) return;
+    const a = pendingAuth;
+    if (a.token) net.send({ t: "token", token: a.token });
+    else if (a.user && a.pass) net.send({ t: a.register ? "register" : "login", user: a.user, pass: a.pass });
+  }
+
   function connectMP(url, name) {
     if (!Net || !Net.available) { $("menuStatus").textContent = "WebSocket is not supported here."; return; }
     url = normalizeWsUrl(url);
+    const user = $("acctUser").value.trim(), pass = $("acctPass").value, register = !!$("acctRegister").checked;
+    let stored = ""; try { stored = localStorage.getItem("cw_token_" + url) || ""; } catch (e) { /* ignore */ }
+    pendingAuth = { user, pass, register, token: (!user && stored) ? stored : null, url };
     $("menuStatus").textContent = "Connecting to " + url + " …";
     net = new Net.Client();
     net.connect(url, name || "Player", {
-      welcome: (w) => startOnlineWorld(w),
+      welcome: (w) => { startOnlineWorld(w); sendAuth(); },
+      authok: (m) => { try { localStorage.setItem("cw_token_" + pendingAuth.url, m.token); } catch (e) { /* ignore */ } addChat("✓ Signed in as " + m.name); $("acctStatus").textContent = "Signed in as " + m.name; },
+      authfail: (m) => { addChat("Account: " + m.msg); $("acctStatus").textContent = m.msg; },
       player: (m) => addRemote(m.id, m),
       move: (m) => { const r = remotePlayers.get(m.id); if (r) { r.pos = m.pos; r.yaw = m.yaw; r.pitch = m.pitch; } else addRemote(m.id, m); },
       set: (m) => world.setBlock(m.x, m.y, m.z, m.id),

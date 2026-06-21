@@ -20,6 +20,9 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const ws = require("./ws.js");
+const { Accounts } = require("./accounts.js");
+
+const accounts = new Accounts(process.env.CW_ACCOUNTS || path.join(__dirname, "accounts.json"));
 
 const PORT = parseInt(process.argv[2] || process.env.PORT, 10) || 8080;
 const ROOT = path.join(__dirname, "..");
@@ -84,11 +87,28 @@ ws.attach(httpServer, (conn) => {
   }));
   console.log("+ player " + id + " (" + players.size + " online)");
 
+  function authResult(r) {
+    if (r.ok) {
+      player.name = r.name;
+      conn.send(JSON.stringify({ t: "authok", name: r.name, token: r.token }));
+      broadcast({ t: "player", id, name: player.name, pos: player.pos, yaw: player.yaw, pitch: player.pitch }, id);
+      console.log("  player " + id + " signed in as " + r.name);
+    } else conn.send(JSON.stringify({ t: "authfail", msg: r.msg }));
+  }
+
   conn.on("message", (raw) => {
     let m; try { m = JSON.parse(raw); } catch (e) { return; }
     if (m.t === "join") {
       player.name = String(m.name || player.name).slice(0, 24);
       broadcast({ t: "player", id, name: player.name, pos: player.pos, yaw: player.yaw, pitch: player.pitch }, id);
+    } else if (m.t === "register") {
+      authResult(accounts.register(m.user, m.pass));
+    } else if (m.t === "login") {
+      authResult(accounts.login(m.user, m.pass));
+    } else if (m.t === "token") {
+      const name = accounts.verifyToken(m.token);
+      if (name) authResult({ ok: true, name, token: m.token });
+      else conn.send(JSON.stringify({ t: "authfail", msg: "Session expired — please log in" }));
     } else if (m.t === "move") {
       if (Array.isArray(m.pos)) player.pos = m.pos;
       player.yaw = m.yaw; player.pitch = m.pitch;
