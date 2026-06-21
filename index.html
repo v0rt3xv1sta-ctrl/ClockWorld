@@ -55,12 +55,13 @@
 
       <h3>Multiplayer</h3>
       <div class="newworld">
-        <div class="fields">
-          <input id="mpUrl" placeholder="ws://localhost:8080" />
-          <input id="mpName" maxlength="24" placeholder="Your name" />
+        <div class="fields"><input id="mpName" maxlength="24" placeholder="Your name" /></div>
+        <button id="joinHereBtn">Join This Server</button>
+        <div class="fields" style="margin-top:10px">
+          <input id="mpUrl" placeholder="ws://host:port (another server)" />
+          <button id="connectBtn" class="secondary">Connect</button>
         </div>
-        <button id="connectBtn" class="secondary">Connect to Server</button>
-        <p class="hint" style="margin-top:8px">Host a server with <code>node server/server.js</code>, then connect here.</p>
+        <p id="mpHint" class="hint" style="margin-top:8px">Host: run <code>node server/server.js</code> and share the address it prints. Players open that address and click <b>Join This Server</b>.</p>
       </div>
     </div>
   </div>

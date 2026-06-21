@@ -79,8 +79,9 @@
     buildHotbarDOM();
     migrateLegacy();
     renderWorldList();
-    const loc = window.location;
-    if (loc && loc.host) $("mpUrl").value = (loc.protocol === "https:" ? "wss://" : "ws://") + loc.host;
+    const origin = sameOriginWS();
+    $("mpUrl").value = origin || "ws://localhost:8080";
+    if (!origin) { $("joinHereBtn").style.display = "none"; $("mpHint").textContent = "Open the game from a running server to use one-click Join, or type a ws:// address."; }
     wireInput();
     setInterval(() => { if (running) saveCurrent(); }, 10000);
     window.addEventListener("beforeunload", () => { if (running) saveCurrent(); });
@@ -173,8 +174,26 @@
     $("chatLog").innerHTML = chatLog.map(escapeHtml).join("<br>");
   }
 
+  // The WebSocket address of the server that served this page (if any).
+  function sameOriginWS() {
+    const loc = window.location;
+    if (!loc || !loc.host) return null; // opened from file:// — no server origin
+    return (loc.protocol === "https:" ? "wss://" : "ws://") + loc.host;
+  }
+  // Make a user-typed address into a valid ws/wss URL; a page served over HTTPS
+  // may only open wss:// (browsers block insecure ws:// from https pages).
+  function normalizeWsUrl(url) {
+    url = (url || "").trim();
+    if (!url) return sameOriginWS() || "ws://localhost:8080";
+    const https = !!(window.location && window.location.protocol === "https:");
+    if (!/^wss?:\/\//i.test(url)) url = (https ? "wss://" : "ws://") + url.replace(/^\/+/, "");
+    if (https && /^ws:\/\//i.test(url)) url = url.replace(/^ws:\/\//i, "wss://"); // auto-upgrade
+    return url;
+  }
+
   function connectMP(url, name) {
     if (!Net || !Net.available) { $("menuStatus").textContent = "WebSocket is not supported here."; return; }
+    url = normalizeWsUrl(url);
     $("menuStatus").textContent = "Connecting to " + url + " …";
     net = new Net.Client();
     net.connect(url, name || "Player", {
@@ -185,7 +204,7 @@
       leave: (m) => remotePlayers.delete(m.id),
       chat: (m) => addChat(m.name + ": " + m.text),
       closed: () => { if (online) { online = false; if (running) quitToMenu(); $("menuStatus").textContent = "Disconnected from server."; } },
-      error: (e) => { $("menuStatus").textContent = "Could not connect: " + (e || ""); },
+      error: () => { $("menuStatus").textContent = "Could not connect to " + url + ". Is the server running, and reachable over " + (url.startsWith("wss") ? "wss (HTTPS)" : "ws") + "?"; },
     });
   }
 
@@ -837,6 +856,7 @@
         document.querySelector("input[name=mode]:checked").value);
       renderWorldList(); startWorld(m);
     });
+    $("joinHereBtn").addEventListener("click", () => connectMP(sameOriginWS(), $("mpName").value.trim()));
     $("connectBtn").addEventListener("click", () => connectMP($("mpUrl").value.trim(), $("mpName").value.trim()));
     $("importBtn").addEventListener("click", () => $("importFile").click());
     $("importFile").addEventListener("change", (e) => {

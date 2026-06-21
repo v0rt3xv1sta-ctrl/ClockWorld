@@ -112,9 +112,19 @@ ws.attach(httpServer, (conn) => {
 });
 
 httpServer.listen(PORT, () => {
-  console.log("ClockWorld server on http://localhost:" + PORT +
-    "  (mode: " + world.mode + ", seed: " + world.seed + ")");
-  console.log("Open that URL to play, or connect via the Multiplayer menu at ws://<host>:" + PORT);
+  const os = require("os");
+  const ips = [];
+  const ifs = os.networkInterfaces();
+  for (const name in ifs) for (const i of ifs[name]) if (i.family === "IPv4" && !i.internal) ips.push(i.address);
+  console.log("\n  ClockWorld server running (mode: " + world.mode + ", seed: " + world.seed + ")");
+  console.log("  ------------------------------------------------------------");
+  console.log("  This machine:   http://localhost:" + PORT);
+  ips.forEach((ip) => console.log("  Same network:   http://" + ip + ":" + PORT + "   (others on your Wi-Fi/LAN)"));
+  console.log("  ------------------------------------------------------------");
+  console.log("  Everyone opens one of those URLs and clicks \"Join This Server\".");
+  console.log("  Over the internet? Tunnel this port and share the HTTPS link, e.g.:");
+  console.log("      npx localtunnel --port " + PORT + "      (or: cloudflared tunnel --url http://localhost:" + PORT + ")");
+  console.log("  The tunnel's https:// link works automatically (it becomes wss://).\n");
 });
 
 function shutdown() { console.log("\nsaving..."); dirty = true; saveWorld(); process.exit(0); }
