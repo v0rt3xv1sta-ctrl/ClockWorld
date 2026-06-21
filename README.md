@@ -58,6 +58,10 @@ In the inventory, **click** picks up / drops a stack, **right-click** takes or
 places one. In the creative inventory, click a palette block to bind it to your
 selected hotbar slot.
 
+**In VR:** right thumbstick moves, left thumbstick snap-turns, look to aim,
+right **trigger** mines and right **grip** places (look at a door to open it);
+**A/X** jumps. Enter from the pause menu's **🥽 Enter VR** button.
+
 ## Features
 
 - **Two game modes** — Survival (health, hazards, mining, inventory) and Creative
@@ -84,6 +88,9 @@ selected hotbar slot.
 - **Modding SDK & texture packs** — add blocks, items, recipes, smelting, and
   event hooks from in-game JavaScript via a `ClockWorld` API, and reskin tiles
   with JSON texture packs. See **[MODDING.md](MODDING.md)**.
+- **VR (WebXR)** — on a VR headset/browser, pause and hit **🥽 Enter VR** for
+  stereo first-person play: head look, thumbstick movement + snap-turn, and
+  gaze-aimed mine/place. Falls back silently to desktop when unsupported.
 - **Full physics**: gravity, jumping, swept AABB collision, swimming with
   auto-step so you can climb out of water, and free-fly.
 - **Procedural pixel-art textures** drawn to a canvas atlas, **day/night cycle**,
@@ -126,7 +133,8 @@ js/world.js       # chunks, terrain gen, meshing, raycasting
 js/renderer.js    # WebGL program, chunk buffers, draw passes, avatars
 js/player.js      # controller: look, movement, physics, health, hunger, modes
 js/net.js         # multiplayer client (WebSocket)
-js/main.js        # bootstrap: UI, modes, crafting, containers, loop, net
+js/vr.js          # WebXR (immersive-vr): per-eye render + controller input
+js/main.js        # bootstrap: UI, modes, crafting, containers, loop, net, VR
 serve.js          # tiny static server for local play
 server/ws.js      # from-scratch WebSocket (RFC 6455) server
 server/accounts.js# user accounts: PBKDF2 hashing + signed tokens

@@ -194,12 +194,26 @@
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, part.ibo);
   };
 
+  // Clear the currently-bound framebuffer to a flat colour (no resize/rebind).
+  Renderer.prototype.clearView = function (rgb) {
+    const gl = this.gl;
+    gl.clearColor(rgb[0], rgb[1], rgb[2], 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  };
+
+  // Desktop: clear the default framebuffer then draw the world.
   // scene: { proj, view, camPos, dayLight, fogColor:[r,g,b], fogNear, fogFar, highlight:[x,y,z]|null }
   Renderer.prototype.render = function (scene) {
     const gl = this.gl;
-    gl.clearColor(scene.fogColor[0], scene.fogColor[1], scene.fogColor[2], 1.0);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    this.clearView(scene.fogColor);
+    this.drawWorld(scene);
+  };
 
+  // Draw the world with the given camera into the current framebuffer/viewport
+  // (no clear) — used per-eye in VR and by render() on desktop.
+  Renderer.prototype.drawWorld = function (scene) {
+    const gl = this.gl;
     gl.useProgram(this.prog);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.tex);

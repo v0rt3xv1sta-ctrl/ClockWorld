@@ -41,6 +41,45 @@ function transformPoint(m, p, w = 1) {
   ok("vec3 cross product");
 })();
 
+// ---- mat4 helpers (used by VR rig) ----
+(function () {
+  const t = Mat4.multiply(Mat4.translation(1, 2, 3), Mat4.translation(4, 5, 6));
+  const p = transformPoint(t, [0, 0, 0]);
+  assert(approx(p[0], 5) && approx(p[1], 7) && approx(p[2], 9), "translation * translation composes");
+  const r = transformPoint(Mat4.rotationY(Math.PI / 2), [1, 0, 0]);
+  assert(approx(r[0], 0) && approx(r[2], -1), "rotationY(90) maps +X to -Z");
+  ok("mat4 translation + rotationY");
+})();
+
+// ---- VR helpers ----
+(function () {
+  const VR = require("../js/vr.js");
+  // looking straight ahead (identity quaternion) -> forward -Z, yaw 0
+  let d = VR.quatForward({ x: 0, y: 0, z: 0, w: 1 });
+  assert(approx(d[0], 0) && approx(d[2], -1), "identity quat faces -Z");
+  assert(approx(VR.yawFromDir(d), 0), "yawFromDir(-Z) == 0");
+  // a 90-degree yaw quaternion (about Y) -> faces -X
+  const s = Math.sin(Math.PI / 4), c = Math.cos(Math.PI / 4);
+  d = VR.quatForward({ x: 0, y: s, z: 0, w: c });
+  assert(approx(d[0], -1, 1e-3) && approx(d[2], 0, 1e-3), "yaw 90 quat faces -X");
+
+  // input mapping: right stick -> move, left stick x -> turn, trigger -> brk
+  const input = VR.readInput([
+    { handedness: "right", gamepad: { axes: [0, 0, 0.5, -0.9], buttons: [{ pressed: true }, { pressed: false }] } },
+    { handedness: "left", gamepad: { axes: [0, 0, -1, 0], buttons: [] } },
+  ], { transform: { orientation: { x: 0, y: 0, z: 0, w: 1 } } });
+  assert(approx(input.moveX, 0.5) && approx(input.moveZ, -0.9), "right stick drives movement");
+  assert(approx(input.turn, -1), "left stick x drives turn");
+  assert(input.brk === true && input.place === false, "right trigger = break");
+  ok("VR input parsing + quaternion forward");
+
+  // rig inverse maps the rig origin to the headset/local origin
+  const rinv = VR.computeRigInverse([10, 64, -5], 0);
+  const o = transformPoint(rinv, [10, 64, -5]);
+  assert(approx(o[0], 0) && approx(o[1], 0) && approx(o[2], 0), "rig inverse moves rig pos to origin");
+  ok("VR rig inverse matrix");
+})();
+
 // ---- noise ----
 (function () {
   const n1 = new Noise(1234), n2 = new Noise(1234), n3 = new Noise(9999);

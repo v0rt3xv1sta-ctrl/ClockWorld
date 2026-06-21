@@ -23,6 +23,7 @@
   const Saves = window.SavesMod.Saves;
   const Net = window.Net;
   const Mods = window.Mods;
+  const VR = window.VR;
   const emitMod = (ev, data) => { if (Mods) Mods.emit(ev, data); };
 
   const $ = (id) => document.getElementById(id);
@@ -56,6 +57,10 @@
   const chatLog = [];
   let chatOpen = false, chatBuf = "";
 
+  // VR (WebXR)
+  let vrActive = false, vrSession = null, rigYaw = 0, vrFloor = true;
+  let vrTarget = null, vrHeadDir = [0, 0, -1], vrTurned = false, vrPrevBrk = false, vrPrevPlace = false;
+
   const anyUIOpen = () => invOpen || containerOpen || dead;
 
   const OFFSETS = [];
@@ -85,6 +90,8 @@
     const origin = sameOriginWS();
     $("mpUrl").value = origin || "ws://localhost:8080";
     if (!origin) { $("joinHereBtn").style.display = "none"; $("mpHint").textContent = "Open the game from a running server to use one-click Join, or type a ws:// address."; }
+    if (VR) VR.isSupported().then((ok) => { if (!ok) $("vrBtn").style.display = "none"; });
+    else $("vrBtn").style.display = "none";
     wireInput();
     setInterval(() => { if (running) saveCurrent(); }, 10000);
     window.addEventListener("beforeunload", () => { if (running) saveCurrent(); });
@@ -263,6 +270,60 @@
     el.textContent = "> " + chatBuf;
   }
 
+  // ====================================================== VR (WebXR)
+  function enterVR() {
+    if (!running || !VR || vrActive) return;
+    rigYaw = 0; vrPrevBrk = vrPrevPlace = false;
+    VR.start({
+      gl: renderer.gl,
+      onReady: (floor) => { vrFloor = floor; },
+      beginFrame: () => renderer.clearView(skyAndLight().sky),
+      getRig: () => ({ pos: [player.pos[0], player.pos[1] + (vrFloor ? 0 : window.Player.EYE), player.pos[2]], yaw: rigYaw }),
+      update: vrUpdate,
+      renderEye: vrRenderEye,
+      onEnd: () => { vrActive = false; vrSession = null; if (running) $("pause").classList.remove("hidden"); },
+    }).then((c) => {
+      vrActive = true; vrSession = c;
+      ["pause", "inventory", "container"].forEach((s) => $(s).classList.add("hidden"));
+    }).catch((e) => { $("vrBtn").textContent = "VR unavailable"; });
+  }
+
+  function vrUpdate(dt, input) {
+    if (!vrTurned && input.turn > 0.7) { rigYaw -= Math.PI / 4; vrTurned = true; }
+    else if (!vrTurned && input.turn < -0.7) { rigYaw += Math.PI / 4; vrTurned = true; }
+    else if (Math.abs(input.turn) < 0.3) vrTurned = false;
+
+    player.yaw = input.headYaw + rigYaw;
+    const cy = Math.cos(rigYaw), sy = Math.sin(rigYaw), hd = input.headDir;
+    vrHeadDir = [cy * hd[0] + sy * hd[2], hd[1], -sy * hd[0] + cy * hd[2]];
+
+    player.update(dt, world, {
+      f: input.moveZ < -0.3, b: input.moveZ > 0.3, l: input.moveX < -0.3, r: input.moveX > 0.3,
+      jump: input.jump, descend: false, sneak: false, sprint: input.sprint,
+    });
+    if (!timeFrozen) time = (time + dt / DAY_LENGTH) % 1;
+    furnaces.forEach((f) => Furnace.tick(f, dt));
+    manageWorld();
+    if (online && net) { moveAcc += dt; if (moveAcc >= 0.08) { net.move(player.pos, player.yaw, player.pitch); moveAcc = 0; } }
+
+    vrTarget = world.raycast(player.getEye(), vrHeadDir, REACH);
+    if (input.brk) { if (player.creative) { if (!vrPrevBrk) breakInstant(vrTarget); } else mine(dt, vrTarget); } else resetMine();
+    if (input.place && !vrPrevPlace && vrTarget) {
+      const tid = world.getBlock(vrTarget.hit[0], vrTarget.hit[1], vrTarget.hit[2]);
+      if (tid === ID.DOOR || tid === ID.DOOR_OPEN) interactBlock(tid, vrTarget.hit); else place(vrTarget);
+    }
+    vrPrevBrk = input.brk; vrPrevPlace = input.place;
+    if (player.dead) player.respawn(player.spawn); // auto-respawn in VR
+  }
+
+  function vrRenderEye(proj, view, camPos) {
+    const sl = skyAndLight();
+    const fogFar = RENDER_DIST * 16 * 0.92;
+    const scene = { proj, view, camPos, dayLight: sl.dayLight, fogColor: sl.sky, fogNear: fogFar * 0.55, fogFar, highlight: vrTarget ? vrTarget.hit : null };
+    renderer.drawWorld(scene);
+    if (online && remotePlayers.size) renderer.drawAvatars([...remotePlayers.values()], scene);
+  }
+
   function generateInitialArea() {
     const pcx = Math.floor(player.pos[0] / W.SX), pcz = Math.floor(player.pos[2] / W.SZ);
     const created = [];
@@ -323,6 +384,7 @@
 
   // ====================================================== loop
   function frame(now) {
+    if (vrActive) { requestAnimationFrame(frame); return; } // the XR session drives its own loop
     let dt = (now - last) / 1000; last = now;
     if (dt > 0.05) dt = 0.05;
     fps += (1 / Math.max(dt, 1e-4) - fps) * 0.1;
@@ -978,6 +1040,7 @@
     });
 
     $("resumeBtn").addEventListener("click", () => canvas.requestPointerLock());
+    $("vrBtn").addEventListener("click", enterVR);
     $("pSaveBtn").addEventListener("click", () => { saveCurrent(); $("pSaveBtn").textContent = "Saved ✓"; setTimeout(() => ($("pSaveBtn").textContent = "Save"), 1200); });
     $("pModeBtn").addEventListener("click", switchMode);
     $("pExportBtn").addEventListener("click", exportCurrent);

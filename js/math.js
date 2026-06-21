@@ -64,6 +64,20 @@
       return out;
     },
 
+    translation(x, y, z) {
+      const m = new Float32Array(16);
+      m[0] = m[5] = m[10] = m[15] = 1;
+      m[12] = x; m[13] = y; m[14] = z;
+      return m;
+    },
+
+    rotationY(a) {
+      const c = Math.cos(a), s = Math.sin(a);
+      const m = new Float32Array(16);
+      m[0] = c; m[2] = -s; m[5] = 1; m[8] = s; m[10] = c; m[15] = 1;
+      return m;
+    },
+
     lookAt(eye, center, up) {
       const out = new Float32Array(16);
       let z0 = eye[0] - center[0], z1 = eye[1] - center[1], z2 = eye[2] - center[2];

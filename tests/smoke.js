@@ -9,6 +9,10 @@ const fs = require("fs");
 const vm = require("vm");
 const path = require("path");
 
+// a thenable that resolves synchronously, so VR.start's promise chain runs inline
+function syncThenable(v) {
+  return { then: (res) => { const r = res(v); return (r && r.then) ? r : syncThenable(r); }, catch: () => syncThenable(v) };
+}
 function makeGL() {
   const fns = {
     getShaderParameter: () => true, getProgramParameter: () => true,
@@ -16,6 +20,7 @@ function makeGL() {
     createShader: () => ({}), createProgram: () => ({}),
     getAttribLocation: () => 0, getUniformLocation: () => ({}),
     createBuffer: () => ({}), createTexture: () => ({}), getExtension: () => ({}),
+    makeXRCompatible: () => syncThenable(),
   };
   return new Proxy(fns, {
     get(t, p) { if (p in t) return t[p]; if (typeof p === "string" && /^[A-Z0-9_]+$/.test(p)) return 1; return () => {}; },
@@ -78,6 +83,29 @@ sandbox.WebSocket = function (url) {
   this.close = () => { this.readyState = 3; if (this.onclose) this.onclose(); };
   lastWS = this;
 };
+// fake WebXR so the VR session loop can be driven synchronously
+let xrFrameCb = null;
+const fakeSession = {
+  updateRenderState() {}, requestReferenceSpace: () => syncThenable({}),
+  requestAnimationFrame: (cb) => { xrFrameCb = cb; }, end() {},
+  addEventListener: (t, cb) => { if (t === "end") fakeSession._end = cb; },
+  inputSources: [
+    { handedness: "right", gamepad: { axes: [0, 0, 0, -1], buttons: [{ pressed: false }, { pressed: false }, {}, {}, { pressed: false }] } },
+    { handedness: "left", gamepad: { axes: [0, 0, 0, 0], buttons: [] } },
+  ],
+};
+sandbox.navigator = { xr: { isSessionSupported: () => Promise.resolve(true), requestSession: () => syncThenable(fakeSession) } };
+sandbox.XRWebGLLayer = function () { this.framebuffer = null; this.getViewport = () => ({ x: 0, y: 0, width: 64, height: 64 }); };
+function fakeFrame() {
+  return {
+    session: fakeSession,
+    getViewerPose: () => ({
+      transform: { orientation: { x: 0, y: 0, z: 0, w: 1 } },
+      views: [{ transform: { inverse: { matrix: sandbox.Mat4.identity() }, position: { x: 0, y: 1.6, z: 0 } }, projectionMatrix: sandbox.Mat4.identity() }],
+    }),
+  };
+}
+
 sandbox.localStorage = mem();
 // pre-seed a mod and an active texture pack so startup mod/pack loading is exercised
 sandbox.localStorage.setItem("clockworld_mods", JSON.stringify([{ name: "smoke", code: "ClockWorld.defineBlock({ name: 'SmokeBlock', color: '#00ff00', hardness: 1 }); ClockWorld.on('blockPlace', function () {});", enabled: true }]));
@@ -96,7 +124,7 @@ sandbox.document = {
 const EV = { preventDefault() {}, stopPropagation() {} };
 
 const ctx = vm.createContext(sandbox);
-["math", "noise", "blocks", "items", "recipes", "furnace", "mods", "inventory", "saves", "textures", "world", "renderer", "player", "net", "main"]
+["math", "noise", "blocks", "items", "recipes", "furnace", "mods", "inventory", "saves", "textures", "world", "renderer", "player", "net", "vr", "main"]
   .forEach((f) => vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "js", f + ".js"), "utf8"), ctx, { filename: f + ".js" }));
 
 const B = sandbox.Blocks;
@@ -233,5 +261,15 @@ run(2);
 els.quitBtn.dispatch("click", EV);
 assert(!els.menu.classList.contains("hidden"), "multiplayer quit returns to menu");
 
+// ---- VR: enter a world, drive XR frames with the fake headset, then exit ----
+els.createBtn.dispatch("click", EV);
+els.vrBtn.dispatch("click", EV); // enterVR -> sync-thenable fake XR session
+assert(xrFrameCb, "VR session started and scheduled an XR frame");
+xrFrameCb(1000, fakeFrame()); // drives vrUpdate + per-eye vrRenderEye
+xrFrameCb(1016, fakeFrame());
+assert(fakeSession._end, "VR session registered an end handler");
+fakeSession._end(); // simulate taking the headset off
+assert(!els.pause.classList.contains("hidden"), "VR exit returns to the pause menu");
+
 if (frames < 80) throw new Error("too few frames: " + frames);
-console.log("Smoke test OK — " + frames + " frames: survival, crafting, interactables, multiplayer client, quit.");
+console.log("Smoke test OK — " + frames + " frames: survival, crafting, interactables, multiplayer, VR, quit.");
