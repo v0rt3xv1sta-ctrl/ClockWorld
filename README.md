@@ -93,6 +93,17 @@ right **trigger** mines and right **grip** places (look at a door to open it);
   gaze-aimed mine/place. Falls back silently to desktop when unsupported.
 - **Full physics**: gravity, jumping, swept AABB collision, swimming with
   auto-step so you can climb out of water, and free-fly.
+- **Flowing water** — a cellular liquid simulation: still sources spread up to
+  seven blocks with falling depth, pour over edges as waterfalls (falling
+  beats sideways spread), and drain away when you remove the source. Dig a
+  trench next to a lake and watch it fill; currents push swimmers downstream.
+  Sources are placeable from the creative palette.
+- **Dynamic sky** — a procedural sky shader with a travelling sun, dawn/dusk
+  glow, moon, twinkling stars, and drifting fbm clouds; sunlight tints the
+  whole world warm at sunset and cool blue at night.
+- **Water rendering** — animated waves, per-level surface heights, fresnel sky
+  reflection, sun glints, depth-shaded blues (bright shallows, dark oceans),
+  and a proper underwater view: blue haze, short fog, dimmed light.
 - **Procedural pixel-art textures** drawn to a canvas atlas, **day/night cycle**,
   and distance fog.
 - **Multiple named worlds** saved to `localStorage` (seed, mode, every edit,
@@ -122,6 +133,7 @@ css/style.css     # HUD, hotbar, crosshair, menu styling
 js/math.js        # vec3 / mat4 (perspective, lookAt, multiply)
 js/noise.js       # seeded Perlin noise + fBm + hash
 js/blocks.js      # block registry: tiles, hardness, drops, stacks, interact
+js/liquids.js     # cellular water-flow simulation + current vectors
 js/items.js       # items (blocks + materials/food), fuel, smelting, icons
 js/recipes.js     # crafting recipe matcher (shaped + shapeless)
 js/furnace.js     # furnace smelting state machine
@@ -145,7 +157,7 @@ tests/            # Node unit, headless smoke, and live server tests
 ## Tests
 
 The dependency-free logic (matrix math, noise, terrain, meshing, raycasting,
-physics, inventory, recipes, furnace, hunger) is unit-tested; a headless harness
+physics, liquid flow, inventory, recipes, furnace, hunger) is unit-tested; a headless harness
 stubs the DOM/WebGL to run the real game through `init()` and a full session
 (survival, crafting, chest/furnace/table/doors, multiplayer client); and a third
 test boots the real server and connects two live WebSocket clients.
@@ -167,6 +179,19 @@ ambient-occlusion and a fake-sun shade into each vertex. The renderer draws all
 opaque geometry (with alpha-testing for leaf/glass cutouts) then water in a
 blended pass, with distance fog hiding the streaming edge. The player is an AABB
 resolved one axis at a time against the voxels each frame.
+
+Water is simulated as a change-driven cellular automaton (`js/liquids.js`):
+block edits wake the surrounding cells, each woken cell recomputes its depth
+level from its neighbours (falling feeds level 7 from above; sideways spread
+loses one level per block and only happens where the water can't fall), and
+changes wake the next ring — so still oceans cost nothing and every waterfall
+eventually goes quiet. The mesher lowers each water cell's surface to its
+level, flags surface vertices, and the shader waves them in the vertex stage
+while adding fresnel sky reflection and a sun glint per fragment. The sky is a
+single fullscreen shader: per-pixel rays reconstructed from the inverse
+view-projection drive a day/night gradient, sun and moon discs, hash-based
+stars, and two octave-warped fbm cloud layers, all steered by the same sun
+direction that tints the world's light.
 
 ## License
 

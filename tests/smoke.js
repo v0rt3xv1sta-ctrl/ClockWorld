@@ -124,7 +124,7 @@ sandbox.document = {
 const EV = { preventDefault() {}, stopPropagation() {} };
 
 const ctx = vm.createContext(sandbox);
-["math", "noise", "blocks", "items", "recipes", "furnace", "mods", "inventory", "saves", "textures", "world", "renderer", "player", "net", "vr", "main"]
+["math", "noise", "blocks", "liquids", "items", "recipes", "furnace", "mods", "inventory", "saves", "textures", "world", "renderer", "player", "net", "vr", "main"]
   .forEach((f) => vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "js", f + ".js"), "utf8"), ctx, { filename: f + ".js" }));
 
 const B = sandbox.Blocks;

@@ -108,6 +108,23 @@
   BLOCKS[DOOR] = def(DOOR, "Door", { side: TILES.door, hardness: 2.0, interact: "door" });
   BLOCKS[DOOR_OPEN] = def(DOOR_OPEN, "Door", { side: TILES.door_open, solid: false, opaque: false, cullSelf: false, hardness: 2.0, interact: "door", drop: DOOR });
 
+  // ---- flowing water ----
+  // WATER (id 8) is a still source; FLOW_BASE+1 .. FLOW_BASE+7 are flowing
+  // cells of rising depth (level 1 = a film, 7 = nearly full). High ids keep
+  // clear of the modding range (25+). The liquid sim lives in liquids.js.
+  const FLOW_BASE = 240;
+  BLOCKS[WATER].level = 8;
+  for (let lvl = 1; lvl <= 7; lvl++) {
+    const b = def(FLOW_BASE + lvl, "Water", {
+      side: TILES.water, solid: false, opaque: false, liquid: true,
+      hardness: Infinity, drop: 0, maxStack: 0,
+    });
+    b.level = lvl;
+    BLOCKS[FLOW_BASE + lvl] = b;
+  }
+  // 0 = not a liquid; sources are 8, flowing cells 1..7
+  function liquidLevel(id) { const b = BLOCKS[id]; return (b && b.liquid) ? (b.level || 8) : 0; }
+
   function isOpaque(id) { const b = BLOCKS[id]; return b ? b.opaque : false; }
   function isSolid(id) { const b = BLOCKS[id]; return b ? b.solid : false; }
   function isLiquid(id) { const b = BLOCKS[id]; return b ? b.liquid : false; }
@@ -143,11 +160,11 @@
   // Every placeable block, for the creative inventory palette (skips air/water/lit/open variants).
   const CREATIVE = [GRASS, DIRT, STONE, COBBLE, LOG, PLANKS, LEAVES, GLASS, SAND,
     BRICK, SNOW, GRAVEL, BEDROCK, COAL_ORE, IRON_ORE, GOLD_ORE, DIAMOND_ORE,
-    CHEST, CRAFTING, FURNACE, DOOR];
+    CHEST, CRAFTING, FURNACE, DOOR, WATER];
 
   const api = {
-    ATLAS_COLS, TILES, ID, BLOCKS, HOTBAR, CREATIVE, EXTRA_TILES,
-    isOpaque, isSolid, isLiquid, hardnessOf, dropOf, maxStackOf, isBreakable, interactOf, defineBlock,
+    ATLAS_COLS, TILES, ID, BLOCKS, HOTBAR, CREATIVE, EXTRA_TILES, FLOW_BASE,
+    isOpaque, isSolid, isLiquid, liquidLevel, hardnessOf, dropOf, maxStackOf, isBreakable, interactOf, defineBlock,
   };
   global.Blocks = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;

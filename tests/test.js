@@ -154,12 +154,12 @@ function transformPoint(m, p, w = 1) {
   c.maxY = 71;
   const geo = w.buildGeometry(c);
   // isolated block, all neighbours air -> 6 faces
-  assert(geo.opaque.data.length === 6 * 4 * 6, "6 faces * 4 verts * 6 floats");
+  assert(geo.opaque.data.length === 6 * 4 * 7, "6 faces * 4 verts * 7 floats");
   assert(geo.opaque.indices.length === 6 * 6, "6 faces * 6 indices");
   assert(geo.water.data.length === 0, "no water geometry");
   // every light value within (0,1]
   let lightsOk = true;
-  for (let i = 5; i < geo.opaque.data.length; i += 6) {
+  for (let i = 5; i < geo.opaque.data.length; i += 7) {
     const L = geo.opaque.data[i];
     if (L <= 0 || L > 1.001) lightsOk = false;
   }
@@ -362,6 +362,89 @@ function transformPoint(m, p, w = 1) {
   assert(everInWater, "player was swimming at some point");
   assert(onBank, "climbed out of the water and stood on the bank (x=" + p.pos[0].toFixed(2) + ", y=" + p.pos[1].toFixed(2) + ")");
   ok("water physics: can swim up and climb out onto a higher bank");
+})();
+
+// ---- liquid flow simulation ----
+(function () {
+  const { LiquidSim, flowVector } = require("../js/liquids.js");
+  const ID = Blocks.ID, level = Blocks.liquidLevel;
+
+  function flatWorld() {
+    const w = new W.World(3);
+    for (let cx = -1; cx <= 1; cx++) for (let cz = -1; cz <= 1; cz++) {
+      const c = new W.Chunk(cx, cz);
+      c.data.fill(0);
+      w.chunks.set(cx + "," + cz, c);
+    }
+    // solid floor at y=59 across all chunks
+    for (let x = -16; x < 32; x++) for (let z = -16; z < 32; z++) w.setBlock(x, 59, z, ID.STONE);
+    return w;
+  }
+  function settle(sim, ticks) { for (let i = 0; i < ticks; i++) sim.tick(); }
+
+  // a source on a floor spreads 7 blocks in every direction, one level less per step
+  const w = flatWorld();
+  const sim = new LiquidSim(w);
+  w.setBlock(8, 60, 8, ID.WATER);
+  sim.disturb(8, 60, 8);
+  settle(sim, 40);
+  assert(level(w.getBlock(9, 60, 8)) === 7, "adjacent cell is level 7");
+  assert(level(w.getBlock(15, 60, 8)) === 1, "seventh cell is level 1");
+  assert(level(w.getBlock(16, 60, 8)) === 0, "spread stops after 7 blocks");
+  assert(level(w.getBlock(8, 60, 12)) === 4, "spreads on both axes");
+  ok("liquid sim: source spreads 7 blocks with falling levels");
+
+  // removing the source drains every flowing cell
+  w.setBlock(8, 60, 8, ID.AIR);
+  sim.disturb(8, 60, 8);
+  settle(sim, 80);
+  let wet = 0;
+  for (let x = 0; x <= 16; x++) for (let z = 0; z <= 16; z++) if (level(w.getBlock(x, 60, z)) > 0) wet++;
+  assert(wet === 0, "all flow drained after source removed (wet=" + wet + ")");
+  ok("liquid sim: flow drains when the source is removed");
+
+  // water prefers falling: over a cliff edge it pours down, then pools below
+  const w2 = flatWorld();
+  const sim2 = new LiquidSim(w2);
+  for (let z = 4; z <= 12; z++) w2.setBlock(6, 59, z, ID.AIR);   // trench in the floor
+  w2.setBlock(5, 60, 8, ID.WATER);
+  sim2.disturb(5, 60, 8);
+  settle(sim2, 60);
+  assert(level(w2.getBlock(6, 60, 8)) > 0, "flows toward the trench");
+  assert(level(w2.getBlock(6, 59, 8)) > 0, "pours down into the trench");
+  assert(level(w2.getBlock(7, 60, 8)) === 0, "does not spread past the drop (prefers falling)");
+  ok("liquid sim: waterfalls take priority over sideways spread");
+
+  // flowVector points from high level toward low level (the current)
+  const w3 = flatWorld();
+  const sim3 = new LiquidSim(w3);
+  w3.setBlock(4, 60, 8, ID.WATER);
+  sim3.disturb(4, 60, 8);
+  settle(sim3, 30);
+  const f = flowVector(w3, 6, 60, 8);
+  assert(f[0] > 0.7 && Math.abs(f[1]) < 0.5, "current pushes away from the source (+x)");
+  const fs = flowVector(w3, 4, 60, 8);
+  assert(fs[0] === 0 && fs[1] === 0, "still sources have no current");
+  ok("liquid sim: flow vector follows the level gradient");
+
+  // meshing: a source renders a lowered, wave-flagged surface
+  const w4 = flatWorld();
+  w4.setBlock(8, 60, 8, ID.WATER);
+  const c = w4.getChunk(0, 0);
+  c.dirty = true;
+  const geo = w4.buildGeometry(c);
+  assert(geo.water.data.length > 0, "water geometry emitted");
+  let sawSurf = false, topOk = true;
+  for (let i = 0; i < geo.water.data.length; i += 7) {
+    if (geo.water.data[i + 6] > 0.5) {
+      sawSurf = true;
+      const y = geo.water.data[i + 1];
+      if (Math.abs(y - (60 + 0.875)) > 0.001) topOk = false; // 0.0625 + (8/8)*0.8125
+    }
+  }
+  assert(sawSurf, "surface vertices flagged for wave animation");
+  assert(topOk, "source surface sits just below the block rim");
+  ok("liquid sim: meshes a lowered animated surface");
 })();
 
 // ---- items ----

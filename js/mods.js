@@ -25,9 +25,20 @@
     for (let i = 0; i < hs.length; i++) { try { hs[i](data); } catch (e) { (global.console || console).error("[mod] handler error in " + ev + ":", e.message); } }
   }
 
+  // engine hooks: main.js binds world/player/time accessors once it boots
+  let engine = null;
+  function bind(fns) { engine = fns; }
+
   const api = {
     version: 1,
     Blocks, Items, Recipes, ID: Blocks.ID, ITEM: Items.ITEM,
+    // world access (available once a world is running; no-ops in the menu)
+    setBlock: (x, y, z, id) => { if (engine && engine.setBlock) engine.setBlock(x, y, z, id); },
+    getBlock: (x, y, z) => (engine && engine.getBlock) ? engine.getBlock(x, y, z) : 0,
+    getTime: () => (engine && engine.getTime) ? engine.getTime() : 0,
+    setTime: (t) => { if (engine && engine.setTime) engine.setTime(t); },
+    playerPos: () => (engine && engine.playerPos) ? engine.playerPos() : null,
+    teleport: (x, y, z) => { if (engine && engine.teleport) engine.teleport(x, y, z); },
     // content
     defineBlock: (spec) => Blocks.defineBlock(spec),
     defineItem: (spec) => Items.defineItem(spec),
@@ -47,7 +58,7 @@
     catch (e) { (global.console || console).error("[mod] '" + (name || "?") + "' failed:", e.message); return false; }
   }
 
-  global.Mods = { api, on, emit, run, handlers };
+  global.Mods = { api, on, emit, run, bind, handlers };
   global.ClockWorld = api;
   if (node) module.exports = global.Mods;
 })(typeof window !== "undefined" ? window : globalThis);

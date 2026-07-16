@@ -232,6 +232,14 @@
         this.vel[1] *= 0.86;                   // water drag
         if (this.vel[1] < -4) this.vel[1] = -4;
         if (cmd.jump) this.vel[1] = SWIM_UP;   // hold to swim / climb up and out
+        // flowing water carries the swimmer along the current
+        const LQ = global.Liquids;
+        if (LQ) {
+          const f = LQ.flowVector(world,
+            Math.floor(this.pos[0]), Math.floor(this.pos[1] + 0.5), Math.floor(this.pos[2]));
+          this.vel[0] += f[0] * 2.3;
+          this.vel[2] += f[1] * 2.3;
+        }
       } else {
         this.vel[1] -= GRAVITY * dt;
         if (this.vel[1] < -TERMINAL) this.vel[1] = -TERMINAL;

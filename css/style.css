@@ -229,3 +229,14 @@ button.danger { color: #ffd7d7; background: rgba(150, 40, 40, 0.5); border: 1px 
 .cook-arrow { display: flex; flex-direction: column; align-items: center; }
 .cook-bar { width: 70px; height: 8px; background: rgba(0, 0, 0, 0.5); border: 1px solid rgba(255, 255, 255, 0.3); border-radius: 4px; overflow: hidden; }
 .cook-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #ffe08a, #ff9f43); }
+
+/* blue haze while the camera is submerged */
+#underwater {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+  background: radial-gradient(ellipse at center,
+    rgba(20, 70, 130, 0.18) 0%, rgba(8, 40, 90, 0.42) 100%);
+}
+#underwater.hidden { display: none; }

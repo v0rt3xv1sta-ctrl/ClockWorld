@@ -34,6 +34,9 @@
   let worldId = null, meta = null, mode = "survival", creativeHotbar = null;
   let selectedIndex = 0;
   let time = 0.3, timeFrozen = false;
+  let sim = null;       // liquid flow simulation (single-player only)
+  let shaderTime = 0;   // monotonic clock for water waves / sky animation
+  let wasUnderwater = false;
   let running = false, locked = false, invOpen = false, dead = false;
   let cursor = null, mouseX = 0, mouseY = 0;
   let mineKey = null, mineProgress = 0, mineTime = 0;
@@ -93,6 +96,16 @@
     if (VR) VR.isSupported().then((ok) => { if (!ok) $("vrBtn").style.display = "none"; });
     else $("vrBtn").style.display = "none";
     wireInput();
+    // give the modding SDK live world access (routes through applyEdit so
+    // multiplayer sync and the liquid sim both see mod edits)
+    if (Mods && Mods.bind) Mods.bind({
+      setBlock: (x, y, z, id) => { if (running) applyEdit(x, y, z, id | 0); },
+      getBlock: (x, y, z) => (running ? world.getBlock(x, y, z) : 0),
+      getTime: () => time,
+      setTime: (t) => { time = ((t % 1) + 1) % 1; },
+      playerPos: () => (running ? player.pos.slice() : null),
+      teleport: (x, y, z) => { if (running) { player.pos = [x, y, z]; player.vel = [0, 0, 0]; player.fallPeak = y; } },
+    });
     setInterval(() => { if (running) saveCurrent(); }, 10000);
     window.addEventListener("beforeunload", () => { if (running) saveCurrent(); });
     last = performance.now();
@@ -163,6 +176,7 @@
     }
     player.spawn = (data.spawn || spawn).slice();
 
+    sim = new window.Liquids.LiquidSim(world);
     generateInitialArea();
     running = true; dead = false; invOpen = false; containerOpen = false; cursor = null;
     lastHeartHP = -1; lastAirN = -1; lastHungerH = -1;
@@ -234,6 +248,7 @@
 
   function startOnlineWorld(w) {
     online = true; worldId = null;
+    sim = null; // the server is authoritative for blocks; no local flow sim
     meta = { name: "Multiplayer", mode: w.mode };
     mode = w.mode === "creative" ? "creative" : "survival";
     world = new W.World(w.seed);
@@ -302,6 +317,8 @@
       jump: input.jump, descend: false, sneak: false, sprint: input.sprint,
     });
     if (!timeFrozen) time = (time + dt / DAY_LENGTH) % 1;
+    shaderTime += dt;
+    if (sim) sim.step(dt);
     furnaces.forEach((f) => Furnace.tick(f, dt));
     manageWorld();
     if (online && net) { moveAcc += dt; if (moveAcc >= 0.08) { net.move(player.pos, player.yaw, player.pitch); moveAcc = 0; } }
@@ -317,9 +334,9 @@
   }
 
   function vrRenderEye(proj, view, camPos) {
-    const sl = skyAndLight();
-    const fogFar = RENDER_DIST * 16 * 0.92;
-    const scene = { proj, view, camPos, dayLight: sl.dayLight, fogColor: sl.sky, fogNear: fogFar * 0.55, fogFar, highlight: vrTarget ? vrTarget.hit : null };
+    const scene = Object.assign(sceneCommon(skyAndLight(), camPos), {
+      proj, view, camPos, highlight: vrTarget ? vrTarget.hit : null,
+    });
     renderer.drawWorld(scene);
     if (online && remotePlayers.size) renderer.drawAvatars([...remotePlayers.values()], scene);
   }
@@ -352,7 +369,7 @@
   function quitToMenu() {
     if (online) { if (net) net.disconnect(); online = false; net = null; remotePlayers.clear(); }
     else saveCurrent();
-    running = false; chatOpen = false;
+    running = false; chatOpen = false; sim = null;
     if (document.pointerLockElement) document.exitPointerLock();
     ["pause", "death", "inventory", "container", "chat", "chatInput"].forEach((s) => $(s).classList.add("hidden"));
     invOpen = false; containerOpen = false; cursor = null; updateCursor();
@@ -389,12 +406,14 @@
     if (dt > 0.05) dt = 0.05;
     fps += (1 / Math.max(dt, 1e-4) - fps) * 0.1;
 
+    shaderTime += dt;
     if (running && locked && !anyUIOpen() && !chatOpen) {
       player.update(dt, world, buildCmd());
       emitMod("tick", { dt });
       if (!timeFrozen) time = (time + dt / DAY_LENGTH) % 1;
       if (online && net) { moveAcc += dt; if (moveAcc >= 0.08) { net.move(player.pos, player.yaw, player.pitch); moveAcc = 0; } }
     }
+    if (running && sim) sim.step(dt); // water keeps flowing even in menus
 
     if (running) {
       furnaces.forEach((f) => Furnace.tick(f, dt)); // smelting runs even when closed
@@ -443,9 +462,13 @@
   }
 
   function skyAndLight() {
-    const sun = Math.sin(time * Math.PI * 2);
+    const a = time * Math.PI * 2;
+    const sun = Math.sin(a);
+    // sun path: rises east, arcs over with a southward tilt
+    const sm = Math.hypot(Math.cos(a), sun, 0.35) || 1;
+    const sunDir = [Math.cos(a) / sm, sun / sm, 0.35 / sm];
     const k = Math.max(0, Math.min(1, (sun + 0.2) / 0.5));
-    const dayLight = 0.2 + 0.8 * k;
+    const dayLight = 0.16 + 0.84 * k;
     const night = [0.02, 0.03, 0.08], day = [0.49, 0.71, 0.97];
     const sky = [
       night[0] + (day[0] - night[0]) * k,
@@ -456,19 +479,50 @@
     sky[0] += (0.95 - sky[0]) * horizon;
     sky[1] += (0.5 - sky[1]) * horizon;
     sky[2] += (0.25 - sky[2]) * horizon;
-    return { dayLight, sky };
+    // sunlight colour: cool blue night -> warm dawn/dusk -> near-white noon
+    const dusk = Math.max(0, 1 - Math.abs(sun) / 0.28);
+    const lightColor = [
+      dayLight * (0.62 + 0.38 * k + 0.34 * dusk),
+      dayLight * (0.68 + 0.32 * k - 0.05 * dusk),
+      dayLight * (1.0 - 0.12 * dusk),
+    ];
+    return { dayLight, sky, sunDir, lightColor, glint: k };
+  }
+
+  // Shared scene fields for both desktop and VR eyes.
+  function sceneCommon(sl, eye) {
+    const fogFar = RENDER_DIST * 16 * 0.92;
+    const s = {
+      dayLight: sl.dayLight, fogColor: sl.sky, sunDir: sl.sunDir,
+      lightColor: sl.lightColor, glint: sl.glint, time: shaderTime,
+      fogNear: fogFar * 0.55, fogFar, underwater: false,
+    };
+    // eye below the surface: short blue fog, dimmer light, no sky
+    const eyeId = world.getBlock(Math.floor(eye[0]), Math.floor(eye[1]), Math.floor(eye[2]));
+    if (Blocks.isLiquid(eyeId)) {
+      s.underwater = true;
+      const d = sl.dayLight;
+      s.fogColor = [0.05 * d, 0.19 * d, 0.34 * d];
+      s.fogNear = 2;
+      s.fogFar = 24;
+      s.lightColor = [sl.lightColor[0] * 0.45, sl.lightColor[1] * 0.62, sl.lightColor[2] * 0.9];
+      s.glint = 0;
+    }
+    if (s.underwater !== wasUnderwater) {
+      wasUnderwater = s.underwater;
+      const ov = $("underwater");
+      if (ov) ov.classList.toggle("hidden", !s.underwater);
+    }
+    return s;
   }
 
   function renderScene(eye, dir, target) {
     const aspect = renderer.resize();
     const proj = window.Mat4.perspective(FOV, aspect, 0.08, RENDER_DIST * 16 + 48);
     const view = window.Mat4.lookAt(eye, window.Vec3.add(eye, dir), [0, 1, 0]);
-    const { dayLight, sky } = skyAndLight();
-    const fogFar = RENDER_DIST * 16 * 0.92;
-    const scene = {
-      proj, view, camPos: eye, dayLight, fogColor: sky,
-      fogNear: fogFar * 0.55, fogFar, highlight: target ? target.hit : null,
-    };
+    const scene = Object.assign(sceneCommon(skyAndLight(), eye), {
+      proj, view, camPos: eye, highlight: target ? target.hit : null,
+    });
     renderer.render(scene);
     if (online && remotePlayers.size) renderer.drawAvatars([...remotePlayers.values()], scene);
   }
@@ -513,6 +567,7 @@
   // Apply a block change locally and, when online, push it to the server.
   function applyEdit(x, y, z, id) {
     world.setBlock(x, y, z, id);
+    if (sim) sim.disturb(x, y, z);
     if (online && net) net.set(x, y, z, id);
   }
 

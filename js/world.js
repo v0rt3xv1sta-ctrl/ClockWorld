@@ -259,15 +259,24 @@
   // Should face of `self` toward neighbour `nb` be emitted?
   function shouldDrawFace(selfId, nbId) {
     const self = Blocks.BLOCKS[selfId];
-    if (self.liquid) return nbId === 0; // water: only show surface against air
     const nb = Blocks.BLOCKS[nbId];
+    if (self.liquid) {
+      // water joins seamlessly with water, and shows through glass/leaves/air
+      if (nb && nb.liquid) return false;
+      return !nb || !nb.opaque;
+    }
     if (!nb || nb.opaque) return false; // hidden behind opaque
     if (nbId === selfId && self.cullSelf) return false; // merge glass etc.
     return true;
   }
 
+  // Rendered surface height of a liquid cell (sources sit just below the rim,
+  // flowing cells get shallower as the level drops).
+  function liquidSurfaceH(lvl) { return 0.0625 + (lvl / 8) * 0.8125; }
+
   // Build interleaved geometry for a chunk. Returns opaque + water buffers,
-  // each as {data: Float32Array(x,y,z,u,v,light per vertex), indices}.
+  // each as {data: Float32Array(x,y,z,u,v,light,extra per vertex), indices}.
+  // `extra` flags liquid surface vertices, which the water shader animates.
   World.prototype.buildGeometry = function (chunk) {
     const opaque = { pos: [], idx: [] };
     const water = { pos: [], idx: [] };
@@ -282,18 +291,33 @@
           const block = Blocks.BLOCKS[id];
           const wx = cx0 + lx, wz = cz0 + lz;
           const target = block.liquid ? water : opaque;
+          // liquid cells render a lowered surface — unless more water sits on
+          // top (a falling column), which must stay full height to join up
+          let surfH = 1, liquidShade = 1;
+          if (block.liquid) {
+            if (!Blocks.isLiquid(get(wx, y + 1, wz))) {
+              surfH = liquidSurfaceH(Blocks.liquidLevel(id));
+            }
+            // deep water darkens: bright turquoise shallows, dark blue depths
+            let depth = 0;
+            while (depth < 10 && Blocks.isLiquid(get(wx, y - 1 - depth, wz))) depth++;
+            liquidShade = 0.45 + 0.55 * Math.exp(-depth * 0.3);
+          }
           for (let fi = 0; fi < FACES.length; fi++) {
             const face = FACES[fi];
             const nx = wx + face.layer[0], ny = y + face.layer[1], nz = wz + face.layer[2];
             const nbId = get(nx, ny, nz);
             if (!shouldDrawFace(id, nbId)) continue;
             const tile = block[face.tile];
-            const base = target.pos.length / 6;
+            const base = target.pos.length / 7;
             for (let vi = 0; vi < 4; vi++) {
               const v = face.verts[vi];
-              const px = wx + v.pos[0], py = y + v.pos[1], pz = wz + v.pos[2];
+              // liquids: pull top vertices down to the level's surface height
+              let vy = v.pos[1], extra = 0;
+              if (block.liquid && vy === 1 && surfH !== 1) { vy = surfH; extra = 1; }
+              const px = wx + v.pos[0], py = y + vy, pz = wz + v.pos[2];
               const uv = tileUV(tile, v.uu, v.vv);
-              let light = face.shade;
+              let light = face.shade * liquidShade;
               if (!block.liquid) {
                 const s1 = Blocks.isOpaque(get(wx + v.side1[0], y + v.side1[1], wz + v.side1[2])) ? 1 : 0;
                 const s2 = Blocks.isOpaque(get(wx + v.side2[0], y + v.side2[1], wz + v.side2[2])) ? 1 : 0;
@@ -301,7 +325,7 @@
                 const ao = (s1 && s2) ? 0 : 3 - (s1 + s2 + co);
                 light *= AO_LEVELS[ao];
               }
-              target.pos.push(px, py, pz, uv[0], uv[1], light);
+              target.pos.push(px, py, pz, uv[0], uv[1], light, extra);
             }
             target.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
           }
@@ -344,7 +368,7 @@
     return null;
   };
 
-  const api = { World, Chunk, SX, SZ, HEIGHT, SEA_LEVEL, SNOW_LINE, FACES, tileUV, shouldDrawFace, idx };
+  const api = { World, Chunk, SX, SZ, HEIGHT, SEA_LEVEL, SNOW_LINE, FACES, tileUV, shouldDrawFace, liquidSurfaceH, idx };
   global.WorldMod = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

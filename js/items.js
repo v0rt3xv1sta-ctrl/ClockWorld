@@ -34,7 +34,8 @@
   function exists(id) { return isBlock(id) || !!META[id]; }
   function name(id) { return isBlock(id) ? Blocks.BLOCKS[id].name : (META[id] ? META[id].name : "?"); }
   function maxStack(id) { return isBlock(id) ? Blocks.maxStackOf(id) : (META[id] ? META[id].maxStack : 64); }
-  function isPlaceable(id) { return isBlock(id) && id !== Blocks.ID.AIR && id !== Blocks.ID.WATER; }
+  // water sources are placeable (creative palette); flowing cells are sim-only
+  function isPlaceable(id) { return isBlock(id) && id !== Blocks.ID.AIR && id < Blocks.FLOW_BASE; }
   function isFood(id) { return !!(META[id] && META[id].food); }
   function food(id) { const m = META[id]; return (m && m.food) ? { hunger: m.food, sat: m.sat || 0, heal: m.heal || 0 } : null; }
   function fuelTime(id) {

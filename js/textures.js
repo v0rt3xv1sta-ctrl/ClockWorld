@@ -72,7 +72,7 @@
     water(p) {
       for (let y = 0; y < TILE; y++) for (let x = 0; x < TILE; x++) {
         const d = (p.rng() * 2 - 1) * 14;
-        p.px(x, y, 50 + d, 100 + d, 200 + d, 0.62);
+        p.px(x, y, 38 + d, 96 + d, 205 + d, 0.66);
       }
     },
     planks(p) {

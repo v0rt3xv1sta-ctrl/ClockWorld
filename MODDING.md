@@ -50,6 +50,17 @@ ClockWorld.on("blockBreak", (e) => {
 - `ClockWorld.addSmelting(inputId, outputId)`
 - `ClockWorld.setTexturePack(map)` — `{ tileName: "#rrggbb" | { pixels:[256] } }`
 
+### World access
+Available once a world is running (no-ops in the menu):
+- `ClockWorld.setBlock(x, y, z, id)` — edit the world; routes through the same
+  path as a player edit, so multiplayer sync and the water simulation both
+  react (place `ClockWorld.ID.WATER` and it flows).
+- `ClockWorld.getBlock(x, y, z) -> id`
+- `ClockWorld.getTime() -> t` / `ClockWorld.setTime(t)` — day cycle, `0..1`
+  (0.25 = noon, 0.75 = midnight).
+- `ClockWorld.playerPos() -> [x, y, z]`
+- `ClockWorld.teleport(x, y, z)`
+
 ### Events — `ClockWorld.on(event, callback)`
 | Event | Data |
 | --- | --- |
