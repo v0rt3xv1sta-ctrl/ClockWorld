@@ -1,0 +1,13 @@
+{
+  "name": "clockworld",
+  "version": "1.0.0",
+  "description": "A dependency-free Minecraft-style voxel sandbox that runs in the browser on raw WebGL.",
+  "scripts": {
+    "test": "node tests/test.js && node tests/smoke.js && node tests/server.test.js",
+    "serve": "node serve.js",
+    "host": "node server/server.js"
+  },
+  "keywords": ["voxel", "minecraft", "webgl", "game", "sandbox"],
+  "license": "GPL-2.0",
+  "private": true
+}

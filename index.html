@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>ClockWorld — a voxel sandbox</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="damage-flash"></div>
+  <div id="underwater" class="hidden"></div>
+  <div id="crosshair" aria-hidden="true"></div>
+  <div id="mine-progress" aria-hidden="true"><div id="mine-bar"></div></div>
+  <div id="hud"></div>
+
+  <!-- bottom-center vitals + hotbar (in-game) -->
+  <div id="vitals" aria-hidden="true">
+    <div id="air" class="bubbles"></div>
+    <div class="vrow">
+      <div id="hearts" class="bubbles"></div>
+      <div id="hunger" class="bubbles"></div>
+    </div>
+    <div id="hotbar"></div>
+  </div>
+
+  <!-- ============ World select menu ============ -->
+  <div id="menu" class="screen">
+    <div class="card wide">
+      <h1>ClockWorld</h1>
+      <p class="tagline">A Minecraft-style voxel sandbox — survival, creative, infinite worlds.</p>
+
+      <h3>Your Worlds</h3>
+      <div id="worldList" class="worldlist"><p class="muted">No worlds yet — create one below.</p></div>
+
+      <h3>New World</h3>
+      <div class="newworld">
+        <div class="fields">
+          <input id="wName" maxlength="40" placeholder="World name" />
+          <input id="wSeed" maxlength="12" placeholder="Seed (optional)" />
+        </div>
+        <div class="modes">
+          <label class="modeopt"><input type="radio" name="mode" value="survival" checked />
+            <span><b>Survival</b><small>Mine, gather, health &amp; hazards</small></span></label>
+          <label class="modeopt"><input type="radio" name="mode" value="creative" />
+            <span><b>Creative</b><small>Fly, infinite blocks, no damage</small></span></label>
+        </div>
+        <div class="row">
+          <button id="createBtn">Create World</button>
+          <button id="importBtn" class="secondary">Import…</button>
+          <input id="importFile" type="file" accept="application/json,.json" hidden />
+        </div>
+        <p id="menuStatus" class="status"></p>
+      </div>
+
+      <h3>Multiplayer</h3>
+      <div class="newworld">
+        <div class="fields"><input id="mpName" maxlength="24" placeholder="Display name (guest)" /></div>
+        <div class="fields">
+          <input id="acctUser" maxlength="20" placeholder="Account (optional)" />
+          <input id="acctPass" type="password" maxlength="64" placeholder="Password" />
+        </div>
+        <label class="acctreg"><input type="checkbox" id="acctRegister" /> Create a new account</label>
+        <button id="joinHereBtn">Join This Server</button>
+        <div class="fields" style="margin-top:10px">
+          <input id="mpUrl" placeholder="ws://host:port (another server)" />
+          <button id="connectBtn" class="secondary">Connect</button>
+        </div>
+        <p id="acctStatus" class="status"></p>
+        <p id="mpHint" class="hint" style="margin-top:8px">Host: run <code>node server/server.js</code> and share the address it prints. Players open that address and click <b>Join This Server</b>. Sign in with an account, or play as a guest.</p>
+      </div>
+
+      <h3>Extend</h3>
+      <button id="modsBtn" class="secondary">Mods &amp; Texture Packs</button>
+    </div>
+  </div>
+
+  <!-- ============ Mods & texture packs ============ -->
+  <div id="mods" class="screen hidden">
+    <div class="card wide">
+      <h2>Mods &amp; Texture Packs</h2>
+      <h3>Texture Packs</h3>
+      <div id="packList" class="worldlist"></div>
+      <button id="packImport" class="secondary">Import Pack (.json)</button>
+      <input id="packFile" type="file" accept=".json,application/json" hidden />
+      <h3>Mods</h3>
+      <div id="modList" class="worldlist"></div>
+      <input id="modName" maxlength="40" placeholder="Mod name" />
+      <textarea id="modCode" rows="5" spellcheck="false" placeholder="ClockWorld.defineBlock({ name: 'Ruby Block', color: '#e0115f', hardness: 3 });"></textarea>
+      <div class="row">
+        <button id="modAdd">Add Mod</button>
+        <button id="modImport" class="secondary">Import .js</button>
+        <input id="modFile" type="file" accept=".js,text/javascript,text/plain" hidden />
+      </div>
+      <p class="hint">Mods run with the <code>ClockWorld</code> API (see <code>MODDING.md</code>). Changes apply on reload.</p>
+      <div class="row">
+        <button id="modsApply">Apply &amp; Reload</button>
+        <button id="modsBack" class="secondary">Back</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="chat" class="hidden"><div id="chatLog"></div></div>
+  <div id="chatInput" class="hidden"></div>
+
+  <!-- ============ Pause ============ -->
+  <div id="pause" class="screen hidden">
+    <div class="card">
+      <h2>Paused</h2>
+      <button id="resumeBtn">Resume</button>
+      <div class="row"><button id="vrBtn" class="secondary">🥽 Enter VR</button></div>
+      <div class="row">
+        <button id="pSaveBtn" class="secondary">Save</button>
+        <button id="pModeBtn" class="secondary">Mode</button>
+      </div>
+      <div class="row">
+        <button id="pExportBtn" class="secondary">Export</button>
+        <button id="quitBtn" class="secondary">Worlds</button>
+      </div>
+      <div class="controls">
+        <div><span class="k">WASD</span> move · <span class="k">Space</span> jump/up · <span class="k">Shift</span> sneak/down</div>
+        <div><span class="k">L-click</span> mine · <span class="k">R-click</span> place · <span class="k">M-click</span> pick</div>
+        <div><span class="k">E</span> inventory · <span class="k">1–9</span>/scroll hotbar · <span class="k">F</span> fly (creative)</div>
+        <div><span class="k">Double-tap W</span> sprint · <span class="k">T</span> freeze time · <span class="k">Esc</span> pause</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Death ============ -->
+  <div id="death" class="screen hidden">
+    <div class="card">
+      <h2 class="died">You Died!</h2>
+      <p class="tagline">The world claimed you. Try again?</p>
+      <button id="respawnBtn">Respawn</button>
+      <button id="dQuitBtn" class="secondary">Back to Worlds</button>
+    </div>
+  </div>
+
+  <!-- ============ Inventory ============ -->
+  <div id="inventory" class="screen hidden">
+    <div class="invpanel">
+      <div id="invTitle">Inventory</div>
+      <div id="invPalette" class="grid palette"></div>
+      <div id="invCraft" class="craftarea">
+        <div id="invCraftGrid" class="grid craftgrid"></div>
+        <div class="arrow">➜</div>
+        <div id="invCraftResult" class="grid resultgrid"></div>
+      </div>
+      <div id="invMain" class="grid"></div>
+      <div class="invlabel">Hotbar</div>
+      <div id="invHotbar" class="grid"></div>
+      <div class="hint" id="invHint">Click to pick up / place · Right-click for one · <span class="k">E</span> / <span class="k">Esc</span> to close</div>
+    </div>
+  </div>
+
+  <!-- ============ Container (chest / crafting table / furnace) ============ -->
+  <div id="container" class="screen hidden">
+    <div class="invpanel">
+      <div id="ctTitle">Chest</div>
+      <div id="ctPanel"></div>
+      <div class="invlabel">Inventory</div>
+      <div id="ctMain" class="grid"></div>
+      <div id="ctHotbar" class="grid"></div>
+      <div class="hint">Click to move items · right-click for one · <span class="k">E</span>/<span class="k">Esc</span> to close</div>
+    </div>
+  </div>
+
+  <div id="cursorStack"></div>
+
+  <script src="js/math.js"></script>
+  <script src="js/noise.js"></script>
+  <script src="js/blocks.js"></script>
+  <script src="js/liquids.js"></script>
+  <script src="js/items.js"></script>
+  <script src="js/recipes.js"></script>
+  <script src="js/furnace.js"></script>
+  <script src="js/mods.js"></script>
+  <script src="js/inventory.js"></script>
+  <script src="js/saves.js"></script>
+  <script src="js/textures.js"></script>
+  <script src="js/world.js"></script>
+  <script src="js/renderer.js"></script>
+  <script src="js/player.js"></script>
+  <script src="js/net.js"></script>
+  <script src="js/vr.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
